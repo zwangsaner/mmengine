@@ -2,6 +2,7 @@
 import json
 import os.path as osp
 import time
+from threading import Lock
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
@@ -26,38 +27,34 @@ from mmengine.runner.checkpoint import save_checkpoint, weights_to_cpu
 from mmengine.utils import apply_to, digit_version, get_git_hash
 from .base import BaseStrategy
 
+_optimizer_registration_lock = Lock()
+
 
 def register_deepspeed_optimizers() -> List[str]:
-    """Register optimizers in ``deepspeed`` to the ``OPTIMIZERS`` registry.
-
-    Returns:
-        List[str]: A list of registered optimizers' name.
-    """
-    deepspeed_optimizers = []
+    """Register the optimizers available in the installed DeepSpeed version."""
     try:
         import deepspeed  # noqa: F401
     except ImportError:
-        pass
-    else:
-        from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
-        from deepspeed.ops.lamb import FusedLamb
+        return []
+
+    from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+    from deepspeed.ops.lamb import FusedLamb
+
+    optimizers = [DeepSpeedCPUAdam, FusedAdam, FusedLamb]
+    try:
         from deepspeed.runtime.fp16.onebit import (OnebitAdam, OnebitLamb,
                                                    ZeroOneAdam)
+    except ModuleNotFoundError as exc:
+        if exc.name != 'deepspeed.runtime.fp16.onebit':
+            raise
+    else:
+        optimizers.extend([OnebitAdam, OnebitLamb, ZeroOneAdam])
 
-        OPTIMIZERS.register_module(module=DeepSpeedCPUAdam)
-        deepspeed_optimizers.append('DeepSpeedCPUAdam')
-        OPTIMIZERS.register_module(module=FusedAdam)
-        deepspeed_optimizers.append('FusedAdam')
-        OPTIMIZERS.register_module(module=FusedLamb)
-        deepspeed_optimizers.append('FusedLamb')
-        OPTIMIZERS.register_module(module=OnebitAdam)
-        deepspeed_optimizers.append('OnebitAdam')
-        OPTIMIZERS.register_module(module=OnebitLamb)
-        deepspeed_optimizers.append('OnebitLamb')
-        OPTIMIZERS.register_module(module=ZeroOneAdam)
-        deepspeed_optimizers.append('ZeroOneAdam')
-
-    return deepspeed_optimizers
+    with _optimizer_registration_lock:
+        for optimizer in optimizers:
+            if OPTIMIZERS.module_dict.get(optimizer.__name__) is not optimizer:
+                OPTIMIZERS.register_module(module=optimizer)
+    return [optimizer.__name__ for optimizer in optimizers]
 
 
 @OPTIM_WRAPPERS.register_module()

@@ -49,7 +49,7 @@ from .checkpoint import (_load_checkpoint, _load_checkpoint_to_model,
 from .log_processor import LogProcessor
 from .loops import EpochBasedTrainLoop, IterBasedTrainLoop, TestLoop, ValLoop
 from .priority import Priority, get_priority
-from .utils import _get_batch_size, set_random_seed
+from .utils import _get_batch_size, _reserve_run_timestamp, set_random_seed
 
 ConfigType = Union[Dict, Config, ConfigDict]
 ParamSchedulerType = Union[List[_ParamScheduler], Dict[str,
@@ -677,11 +677,7 @@ class Runner:
 
         self._rank, self._world_size = get_dist_info()
 
-        timestamp = torch.tensor(time.time(), dtype=torch.float64)
-        # broadcast timestamp from 0 process to other processes
-        broadcast(timestamp)
-        self._timestamp = time.strftime('%Y%m%d_%H%M%S',
-                                        time.localtime(timestamp.item()))
+        self._timestamp = _reserve_run_timestamp(self.work_dir)
 
         # https://github.com/pytorch/pytorch/issues/973
         # set resource limit
@@ -1882,6 +1878,7 @@ class Runner:
         elif _priority is not None:
             hook_obj.priority = _priority
 
+        hook_obj.before_register(self)
         inserted = False
         for i in range(len(self._hooks) - 1, -1, -1):
             if get_priority(hook_obj.priority) >= get_priority(

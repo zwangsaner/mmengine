@@ -2,7 +2,6 @@
 import copy
 import os.path as osp
 import platform
-import time
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -225,11 +224,8 @@ class BaseStrategy(metaclass=ABCMeta):
 
         self._rank, self._world_size = get_dist_info()
 
-        timestamp = torch.tensor(time.time(), dtype=torch.float64)
-        # broadcast timestamp from 0 process to other processes
-        broadcast(timestamp)
-        self._timestamp = time.strftime('%Y%m%d_%H%M%S',
-                                        time.localtime(timestamp.item()))
+        from mmengine.runner.utils import _reserve_run_timestamp
+        self._timestamp = _reserve_run_timestamp(self.work_dir)
 
         # https://github.com/pytorch/pytorch/issues/973
         # set resource limit

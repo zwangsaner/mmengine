@@ -4,6 +4,10 @@ The default Runner records training, validation and test metrics in the local Tr
 
 Trackio requires Python 3.10 or newer. Earlier Python versions use the terminal and text log.
 
+Epoch-based training uses the epoch as the validation step. Iteration-based training uses the iteration. Set `default_hooks.logger.log_metric_by_epoch` to choose the unit explicitly.
+
+Each runner owns its tracking run. You can log images before training and call `runner.test()` after training to add results to that run. If you have already opened a Trackio run yourself, it stays active for your own logging.
+
 To choose a project or run name, configure the visualizer in your training config.
 
 ```python

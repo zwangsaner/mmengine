@@ -3,7 +3,8 @@ import inspect
 import os.path as osp
 import sys
 import warnings
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
+from typing import (TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Type,
+                    Union)
 
 if TYPE_CHECKING:
     from matplotlib.font_manager import FontProperties
@@ -370,16 +371,15 @@ class Visualizer(ManagerMixin):
         self._vis_backends[name] = backend
 
     @master_only
-    def get_backend(self, name) -> 'BaseVisBackend':
-        """Get vis backend by name.
-
-        Args:
-            name (str): The name of vis backend
-
-        Returns:
-             BaseVisBackend: The vis backend.
-        """
-        return self._vis_backends.get(name)  # type: ignore
+    def get_backend(
+            self,
+            name: Union[str,
+                        Type[BaseVisBackend]]) -> Optional[BaseVisBackend]:
+        """Get a backend by registered name, or its first instance by type."""
+        if isinstance(name, type):
+            return next((backend for backend in self._vis_backends.values()
+                         if isinstance(backend, name)), None)
+        return self._vis_backends.get(name)
 
     def _is_posion_valid(self, position: np.ndarray) -> bool:
         """Judge whether the position is in image.

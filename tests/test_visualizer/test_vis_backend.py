@@ -99,7 +99,48 @@ def _record_local_experiment():
         case.tearDown()
 
 
-def test_trackio_local_experiment(tmp_path, monkeypatch):
+def _record_independent_runs():
+    import trackio
+    from trackio.sqlite_storage import SQLiteStorage
+
+    outer = trackio.init(
+        project='outer', name='parent', config={'owner': 'caller'})
+    outer_config = trackio.config
+    first = TrackioVisBackend('.', dict(project='models', name='trial'))
+    second = TrackioVisBackend('.', dict(project='models', name='trial'))
+    try:
+        # Both runs exist before either has written its first metric.
+        run_a = first.experiment
+        run_b = second.experiment
+        first.add_scalar('trained_a', 1)
+        first.close()
+        second.add_scalar('trained_b', 2)
+        second.close()
+        first.add_scalar('tested_a', 3)
+        first.close()
+        assert trackio.context_vars.current_run.get() is outer
+        assert trackio.config is outer_config
+        trackio.log({'after_training': 1})
+    finally:
+        first.close()
+        second.close()
+        outer.finish()
+
+    def keys(run):
+        by_id = {'run_id': run.id} if hasattr(run, 'id') else {'run': run.name}
+        rows = SQLiteStorage.get_logs('models', **by_id)
+        return {key for row in rows for key in row}
+
+    assert {'trained_a', 'tested_a'} <= keys(run_a)
+    assert 'trained_b' in keys(run_b)
+    assert 'tested_a' not in keys(run_b)
+    assert any('after_training' in row
+               for row in SQLiteStorage.get_logs('outer', 'parent'))
+
+
+@pytest.mark.parametrize('record',
+                         [_record_local_experiment, _record_independent_runs])
+def test_trackio_local_experiment(tmp_path, monkeypatch, record):
     import multiprocessing
 
     monkeypatch.setenv('TRACKIO_DIR', str(tmp_path))
@@ -108,8 +149,7 @@ def test_trackio_local_experiment(tmp_path, monkeypatch):
     for key in ('TRACKIO_SPACE_ID', 'TRACKIO_SERVER_URL', 'TRACKIO_DATASET_ID',
                 'TRACKIO_BUCKET_ID'):
         monkeypatch.delenv(key, raising=False)
-    process = multiprocessing.get_context('spawn').Process(
-        target=_record_local_experiment)
+    process = multiprocessing.get_context('spawn').Process(target=record)
     process.start()
     process.join(90)
     if process.is_alive():

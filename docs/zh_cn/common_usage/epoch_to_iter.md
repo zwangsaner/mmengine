@@ -51,7 +51,7 @@ runner = Runner(
    )
    ```
 
-2. 将 `default_hooks` 中的 `logger` 的 `log_metric_by_epoch` 设置为 False， `checkpoint` 的 `by_epoch` 设置为 `False`。
+2. 将检查点钩子的 `by_epoch` 设为 `False`。日志钩子默认跟随迭代训练循环，也可以显式选择按迭代记录。
 
    ```python
    default_hooks = dict(

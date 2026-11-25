@@ -24,8 +24,19 @@ def test_ema_shares_only_the_process_group(tmp_path):
         bn = torch.nn.SyncBatchNorm(2, process_group=group)
         model = torch.nn.Sequential(bn)
         model.group = group  # MMCV SyncBatchNorm stores its group here.
+        nested_group = dist.new_group([0])
+        groups = [nested_group]
+        model.parallel_groups = {nested_group: groups, 'cycle': groups}
+        groups.append(model.parallel_groups)
+
         ema = ExponentialMovingAverage(model)
         assert ema.module.group is group
+        copied = ema.module.parallel_groups
+        assert copied is not model.parallel_groups
+        assert copied[nested_group] is copied['cycle']
+        assert copied[nested_group][0] is nested_group
+        assert copied[nested_group][1] is copied
+
         assert ema.module[0].process_group is group
         assert ema.module[0].weight is not bn.weight
         assert ema.module[0].running_mean.data_ptr() != bn.running_mean.data_ptr()

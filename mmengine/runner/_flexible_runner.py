@@ -1315,6 +1315,7 @@ class FlexibleRunner:
         elif _priority is not None:
             hook_obj.priority = _priority
 
+        hook_obj.before_register(self)
         inserted = False
         for i in range(len(self._hooks) - 1, -1, -1):
             if get_priority(hook_obj.priority) >= get_priority(

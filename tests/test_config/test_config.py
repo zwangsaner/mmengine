@@ -317,6 +317,26 @@ class TestConfig:
         assert saved.objects == [str(optimizer)]
         assert cfg.optim_wrapper.optimizer is optimizer
 
+    def test_dump_runtime_values(self, tmp_path):
+        from pathlib import Path
+
+        import torch
+
+        objects = [
+            torch.device('cpu'),
+            Path('data/train'),
+            torch.tensor([0, 1])
+        ]
+        config = Config(
+            dict(objects=objects, device=objects[0], loss_floor=float('-inf')))
+        path = tmp_path / 'runtime_values.py'
+        config.dump(path)
+        saved = Config.fromfile(path)
+        assert saved.objects == [str(obj) for obj in objects]
+        assert saved.device == 'cpu'
+        assert saved.loss_floor == float('-inf')
+        assert config.objects[2] is objects[2]
+
     def test_repr(self, tmp_path):
         cfg_file = osp.join(self.data_path,
                             'config/py_config/simple_config.py')

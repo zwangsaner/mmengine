@@ -21,6 +21,9 @@ class Hook:
               'before_test', 'before_test_epoch', 'before_test_iter',
               'after_test_iter', 'after_test_epoch', 'after_test', 'after_run')
 
+    def before_register(self, runner) -> None:
+        """Prepare runner components when the hook is registered."""
+
     def before_run(self, runner) -> None:
         """All subclasses should override this method, if they need any
         operations before the training validation or testing process.

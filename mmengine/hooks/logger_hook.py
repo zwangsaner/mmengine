@@ -60,11 +60,9 @@ class LoggerHook(Hook):
             FileClient. See :class:`mmengine.fileio.FileClient` for details.
             Defaults to None. It will be deprecated in future. Please use
             `backend_args` instead.
-        log_metric_by_epoch (bool): Whether to output metric in validation step
-            by epoch. It can be true when running in epoch based runner.
-            If set to True, `after_val_epoch` will set `step` to self.epoch in
-            `runner.visualizer.add_scalars`. Otherwise `step` will be
-            self.iter. Defaults to True.
+        log_metric_by_epoch (bool, optional): Use the epoch as the validation
+            step when True and the iteration when False. By default the
+            training loop determines the unit.
         backend_args (dict, optional): Arguments to instantiate the
             prefix of uri corresponding backend. Defaults to None.
             New in v0.2.0.
@@ -83,7 +81,7 @@ class LoggerHook(Hook):
                  out_suffix: SUFFIX_TYPE = ('.json', '.log', '.py', 'yaml'),
                  keep_local: bool = True,
                  file_client_args: Optional[dict] = None,
-                 log_metric_by_epoch: bool = True,
+                 log_metric_by_epoch: Optional[bool] = None,
                  backend_args: Optional[dict] = None):
 
         if not isinstance(interval, int):
@@ -257,7 +255,12 @@ class LoggerHook(Hook):
             epoch = step = 0
         else:
             epoch = runner.epoch
-            step = epoch if self.log_metric_by_epoch else runner.iter
+            by_epoch = self.log_metric_by_epoch
+            if by_epoch is None:
+                from mmengine.runner.loops import IterBasedTrainLoop
+                by_epoch = not isinstance(runner._train_loop,
+                                          IterBasedTrainLoop)
+            step = epoch if by_epoch else runner.iter
         tag["epoch"] = epoch
         runner.visualizer.add_scalars(self._process_tags(tag), step=step)
 

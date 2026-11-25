@@ -1,10 +1,17 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import atexit
 import functools
+import hashlib
+import inspect
 import json
 import logging
 import warnings
 from abc import ABCMeta, abstractmethod
+from contextvars import Context, ContextVar
+from threading import Lock
 from typing import Any, Callable, Optional, Sequence, Union
+from uuid import uuid4
+from weakref import finalize
 
 import numpy as np
 import torch
@@ -153,6 +160,9 @@ class BaseVisBackend(metaclass=ABCMeta):
         pass
 
 
+_trackio_init_lock = Lock()
+
+
 @VISBACKENDS.register_module()
 class TrackioVisBackend(BaseVisBackend):
     """Send scalars, RGB images and configuration reports to a Trackio run.
@@ -168,15 +178,103 @@ class TrackioVisBackend(BaseVisBackend):
     def __init__(self, save_dir: str, init_kwargs: Optional[dict] = None):
         super().__init__(save_dir)
         self._init_kwargs = {"project": "mmengine", **(init_kwargs or {})}
-        self._resume_name = None
+        self._run = None
+        self._resume_kwargs = None
+        self._context = None
+        self._legacy_claim = None
 
-    def configure(self, init_kwargs: dict) -> None:
+    def configure(self,
+                  init_kwargs: dict,
+                  *,
+                  default_name: Optional[str] = None) -> None:
         """Apply runner options before starting a Trackio run."""
-        if any(self._init_kwargs.get(k) != v for k, v in init_kwargs.items()):
+        if default_name is not None and 'name' not in self._init_kwargs:
+            init_kwargs = {'name': default_name, **init_kwargs}
+        if any(
+                self._init_kwargs.get(k) is not value
+                and self._init_kwargs.get(k) != value
+                for k, value in init_kwargs.items()):
             if self._env_initialized:
                 raise RuntimeError("The Trackio run has already started.")
+            if self._legacy_claim is not None:
+                self._legacy_claim()
+                self._legacy_claim = None
             self._init_kwargs.update(init_kwargs)
-            self._resume_name = None
+            self._run = None
+            self._resume_kwargs = None
+            self._context = None
+
+    def _new_legacy_run(self, sdk, active):
+        """Claim a name until the first batch is visible to other processes."""
+        from trackio.sqlite_storage import SQLiteStorage
+
+        options = self._init_kwargs
+        project = options['project']
+        db = SQLiteStorage.get_project_db_path(project)
+        directory = db.parent / '.mmengine-run-names'
+        directory.mkdir(parents=True, exist_ok=True)
+        preferred = options.get('name') or sdk.utils.generate_readable_name(
+            SQLiteStorage.get_runs(project), options.get('space_id'))
+        external_name = active.name if active is not None and active.project == project else None
+        name = preferred
+        while True:
+            key = hashlib.sha256(f'{db.name}/{name}'.encode()).hexdigest()
+            claim = directory / key
+            try:
+                claim.touch(exist_ok=False)
+            except FileExistsError:
+                pass
+            else:
+                cleanup = finalize(self, claim.unlink, missing_ok=True)
+                try:
+                    if name != external_name and name not in SQLiteStorage.get_runs(
+                            project):
+                        run = sdk.init(**dict(options, name=name))
+                        self._legacy_claim = cleanup
+                        return run
+                finally:
+                    if self._legacy_claim is not cleanup:
+                        cleanup()
+            name = f'{preferred}-{uuid4().hex[:12]}'
+
+    def _open_run(self, sdk, active):
+        if self._resume_kwargs is not None:
+            # init(resume=...) selects the latest run with the display name.
+            # The native Run constructor accepts the original run's ID.
+            run = sdk.Run(**self._resume_kwargs)
+        elif self._run is not None:
+            run = sdk.init(
+                **dict(self._init_kwargs, name=self._run.name, resume='allow'))
+        elif (isinstance(sdk.Run, type)
+              and 'run_id' not in inspect.signature(sdk.Run).parameters
+              and self._init_kwargs.get('resume', 'never') == 'never'):
+            run = self._new_legacy_run(sdk, active)
+        else:
+            run = sdk.init(**self._init_kwargs)
+            if isinstance(getattr(run, 'id', None), str):
+                self._resume_kwargs = self._resume_options(run, sdk.Run)
+        sdk.context_vars.current_run.set(run)
+        return run
+
+    def _resume_options(self, run, run_type):
+        options = dict(
+            self._init_kwargs,
+            url=run.url,
+            client=None,
+            project=run.project,
+            name=run.name,
+            run_id=run.id)
+        # Keep destinations and monitors resolved from the SDK environment.
+        for key in ('space_id', 'server_base_url', 'bucket_id', 'write_token'):
+            if hasattr(run, '_' + key):
+                options[key] = getattr(run, '_' + key)
+        for key, attr in (('auto_log_gpu', '_gpu_monitor'), ('auto_log_cpu',
+                                                             '_cpu_monitor'),
+                          ('capture_console', '_console_capture')):
+            if options.get(key) is None:
+                options[key] = getattr(run, attr, None) is not None
+        parameters = inspect.signature(run_type).parameters
+        return {k: v for k, v in options.items() if k in parameters}
 
     def _init_env(self):
         try:
@@ -188,11 +286,27 @@ class TrackioVisBackend(BaseVisBackend):
                 'Install Trackio with "pip install trackio" to use TrackioVisBackend.'
             ) from exc
 
-        kwargs = self._init_kwargs.copy()
-        if self._resume_name is not None:
-            kwargs.update(name=self._resume_name, resume="allow")
-        self._run = trackio.init(**kwargs)
-        self._trackio = trackio
+        with _trackio_init_lock:
+            if self._env_initialized:
+                return
+            if self._context is None:
+                self._context = Context()
+            active = trackio.context_vars.current_run.get()
+            # init mutates both ContextVars and the module-level config. Keep
+            # the caller's run live while initializing the runner's own run.
+            config = trackio.config
+            try:
+                self._run = self._context.run(self._open_run, trackio, active)
+            finally:
+                trackio.config = config
+            if active is None:
+                for var in vars(trackio.context_vars).values():
+                    if isinstance(var, ContextVar) and var in self._context:
+                        var.set(self._context[var])
+                trackio.config = self._run.config
+            self._trackio = trackio
+            self._env_initialized = True
+            atexit.register(self.close)
 
     @property
     @force_init_env
@@ -267,12 +381,17 @@ class TrackioVisBackend(BaseVisBackend):
             self._run.log(metrics, step=step)
 
     def close(self) -> None:
-        """Flush the run if this backend started one."""
+        """Flush this backend's run and release its SDK resources."""
         if self._env_initialized:
-            # Let the SDK clean up its active run when this backend owns it.
-            if self._trackio.context_vars.current_run.get() is self._run:
-                self._trackio.finish()
-            else:
-                self._run.finish()
-            self._resume_name = self._run.name
+            self._run.finish()
+            current = self._trackio.context_vars.current_run
+            if current.get() is self._run:
+                current.set(None)
+            self._context.run(current.set, None)
             self._env_initialized = False
+            atexit.unregister(self.close)
+            if self._legacy_claim is not None:
+                from trackio.sqlite_storage import SQLiteStorage
+                if self._run.name in SQLiteStorage.get_runs(self._run.project):
+                    self._legacy_claim()
+                    self._legacy_claim = None

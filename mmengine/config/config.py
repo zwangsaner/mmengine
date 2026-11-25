@@ -4,6 +4,7 @@ import copy
 import difflib
 import io
 import json
+import math
 import os
 import os.path as osp
 import platform
@@ -1464,8 +1465,8 @@ class Config:
     def pretty_text(self) -> str:
         """Get formatted Python config text.
 
-        Runtime objects whose display text is not a Python expression are
-        recorded as strings. Their live instances stay in the config.
+        Runtime objects without a literal representation are saved as strings.
+        The config retains the live instances.
         """
         import yapf
         from yapf.yapflib.yapf_api import FormatCode
@@ -1483,14 +1484,21 @@ class Config:
             return s
 
         def _format_value(value):
-            if isinstance(value, str):
+            if isinstance(value, str) or value is None or type(value) in (
+                    int, bool, bytes, bytearray, range):
                 return repr(value)
             text = str(value)
-            if value is None or type(value) in (bool, int, float, complex):
-                return text
+            if type(value) is float:
+                return text if math.isfinite(value) else f'float({text!r})'
+            if type(value) is complex:
+                if math.isfinite(value.real) and math.isfinite(value.imag):
+                    return text
+                return f'complex({text!r})'
             try:
-                ast.parse(text, mode='eval')
-            except SyntaxError:
+                ast.literal_eval(text)
+            except (SyntaxError, ValueError):
+                # Display strings such as "cpu" and "tensor([1])" have no
+                # corresponding names in a standalone config.
                 return repr(text)
             return text
 

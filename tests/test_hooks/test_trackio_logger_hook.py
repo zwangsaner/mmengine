@@ -63,6 +63,54 @@ class TestTrackioLoggerHook(RunnerTestCase):
             self.assertIn("test/time", test_event.args[0])
             run.finish.assert_called_once_with()
 
+    def test_named_backend_accepts_preview_before_training(self):
+        cfg = self.epoch_based_cfg
+        cfg.train_cfg.max_epochs = 1
+        cfg.visualizer = dict(
+            type='Visualizer',
+            vis_backends=[dict(type='TrackioVisBackend', name='dashboard')])
+        cfg.default_hooks.logger = dict(
+            type='TrackioLoggerHook',
+            interval=1,
+            init_kwargs=dict(project='previews'))
+        sdk = MagicMock()
+        with patch.dict(sys.modules, trackio=sdk):
+            runner = self.build_runner(cfg)
+            runner.visualizer.add_scalar('preview_width', 32)
+            runner.train()
+        assert sdk.init.call_count == 1
+        assert sdk.init.call_args.kwargs["name"] == runner.experiment_name
+        assert sdk.init.call_args.kwargs['project'] == 'previews'
+        assert runner.visualizer.get_backend('dashboard') is not None
+
+    def test_default_backend_configured_before_preview(self):
+        cfg = self.epoch_based_cfg
+        cfg.train_cfg.max_epochs = 1
+        cfg.default_hooks.logger = dict(
+            type='TrackioLoggerHook', init_kwargs=dict(project='previews'))
+        sdk = MagicMock()
+        with patch.dict(sys.modules, trackio=sdk):
+            runner = self.build_runner(cfg)
+            runner.visualizer.add_scalar('preview_width', 32)
+            runner.train()
+        sdk.init.assert_called_once_with(
+            project='previews', name=runner.experiment_name)
+
+    def test_iteration_validation_steps(self):
+        cfg = self.iter_based_cfg
+        cfg.train_cfg.update(max_iters=2, val_interval=1)
+        cfg.log_processor = dict(by_epoch=False, log_with_hierarchy=True)
+        cfg.default_hooks.logger = dict(type='LoggerHook', interval=1)
+        sdk = MagicMock()
+        with patch.dict(sys.modules, trackio=sdk):
+            self.build_runner(cfg).train()
+        steps = [
+            call.kwargs['step']
+            for call in sdk.init.return_value.log.call_args_list
+            if 'val/acc' in call.args[0]
+        ]
+        assert steps == [1, 2]
+
     def test_non_main_process(self):
         hook = HOOKS.build(dict(type="TrackioLoggerHook"))
         self.assertIsInstance(hook, TrackioLoggerHook)
@@ -70,5 +118,6 @@ class TestTrackioLoggerHook(RunnerTestCase):
         with patch(
                 "mmengine.hooks.trackio_logger_hook.is_main_process",
                 return_value=False):
+            hook.before_register(runner)
             hook.before_run(runner)
         runner.visualizer.get_backend.assert_not_called()

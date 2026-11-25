@@ -12,7 +12,7 @@ param_scheduler = dict(
 )
 
 default_hooks = dict(
-    logger=dict(type='LoggerHook', log_metric_by_epoch=True),  # log_metric_by_epoch is True by default
+    logger=dict(type='LoggerHook', log_metric_by_epoch=True),  # select epochs explicitly
     checkpoint=dict(type='CheckpointHook', interval=2, by_epoch=True),  # by_epoch is True by default
 )
 
@@ -52,7 +52,7 @@ There are four steps to convert the above configuration to iteration based train
      )
    ```
 
-2. Set `log_metric_by_epoch` to `False` in logger and `by_epoch` to `False` in checkpoint.
+2. Set `by_epoch=False` in the checkpoint hook. The logger follows the iteration-based training loop by default. You can also select iterations explicitly.
 
    ```python
    default_hooks = dict(

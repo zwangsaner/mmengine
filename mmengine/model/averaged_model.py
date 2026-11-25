@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import logging
 from abc import abstractmethod
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Optional
 
@@ -10,6 +11,27 @@ from torch import Tensor
 
 from mmengine.logging import print_log
 from mmengine.registry import MODELS
+
+
+def _process_group_memo(model: nn.Module) -> dict:
+    """Share communicators during deepcopy, including those in nested containers."""
+    group_type = getattr(torch.distributed, 'ProcessGroup', ())
+    memo = {}
+    seen = set()
+    pending = [vars(module) for module in model.modules()]
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, group_type):
+            memo[id(value)] = value
+        elif isinstance(value, Mapping):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            pending.extend(value)
+    return memo
 
 
 class BaseAveragedModel(nn.Module):
@@ -59,15 +81,8 @@ class BaseAveragedModel(nn.Module):
                  device: Optional[torch.device] = None,
                  update_buffers: bool = False) -> None:
         super().__init__()
-        # SyncBatchNorm layers keep a live communicator. Both models must
-        # use the same group while owning independent parameters and buffers.
-        group_type = getattr(torch.distributed, 'ProcessGroup', ())
-        memo = {
-            id(value): value
-            for module in model.modules() for value in vars(module).values()
-            if isinstance(value, group_type)
-        }
-        self.module = deepcopy(model, memo).requires_grad_(False)
+        self.module = deepcopy(
+            model, _process_group_memo(model)).requires_grad_(False)
         self.interval = interval
         if device is not None:
             self.module = self.module.to(device)

@@ -1,17 +1,51 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import logging
+import os
 import random
-from typing import List, Optional, Tuple
+import time
+from collections import Counter
+from threading import Lock
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
 from mmengine.device import is_cuda_available, is_musa_available
-from mmengine.dist import get_rank, sync_random_seed
+from mmengine.dist import broadcast_object_list, get_rank, sync_random_seed
 from mmengine.logging import print_log
 from mmengine.utils import digit_version, is_list_of
 from mmengine.utils.dl_utils import TORCH_VERSION
+
+_timestamp_counts = Counter()
+_timestamp_lock = Lock()
+
+
+def _reserve_run_timestamp(work_dir: str) -> str:
+    """Reserve one log directory on rank zero and share its name with all ranks."""
+    result: List[Union[str, OSError]] = ['']
+    if get_rank() == 0:
+        stamp = time.strftime('%Y%m%d_%H%M%S', time.localtime(time.time()))
+        try:
+            with _timestamp_lock:
+                while True:
+                    index = _timestamp_counts[stamp]
+                    _timestamp_counts[stamp] += 1
+                    name = f'{stamp}_{index:03d}' if index else stamp
+                    try:
+                        os.mkdir(os.path.join(work_dir, name))
+                    except FileExistsError:
+                        continue
+                    result[0] = name
+                    break
+        except OSError as exc:
+            # Let every worker leave the collective if the destination fails.
+            result[0] = exc
+    broadcast_object_list(result)
+    timestamp = result[0]
+    if isinstance(timestamp, OSError):
+        raise timestamp
+    return timestamp
 
 
 def calc_dynamic_intervals(

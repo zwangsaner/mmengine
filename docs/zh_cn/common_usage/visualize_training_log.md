@@ -4,6 +4,10 @@ Runner 默认将训练、验证和测试指标写入本地 Trackio 项目 `mmeng
 
 Trackio 要求 Python 3.10 或更高版本。较早的 Python 版本使用终端和文本日志。
 
+按轮训练时，验证指标使用轮次作为横坐标。按迭代训练时，使用迭代次数。可以用 `default_hooks.logger.log_metric_by_epoch` 显式指定单位。
+
+每个 Runner 管理自己的 Trackio 运行。可以在训练前记录图片，训练后再调用 `runner.test()` 将测试结果写入同一运行。自行打开的外层 Trackio 运行可以继续记录数据。
+
 在配置文件中可以指定项目名和运行名。
 
 ```python

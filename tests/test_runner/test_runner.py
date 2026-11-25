@@ -1440,6 +1440,23 @@ class TestRunner(TestCase):
         log_processor = runner.build_log_processor(cfg)
         self.assertIsInstance(log_processor, CustomLogProcessor)
 
+    def test_same_second_experiments_are_isolated(self):
+        import time
+        from pathlib import Path
+        from unittest.mock import patch
+
+        cfg = self.epoch_based_cfg
+        cfg.pop('experiment_name', None)
+        with patch.object(time, 'time', return_value=1700000000.0):
+            first = Runner.from_cfg(cfg)
+            cfg.work_dir = str(Path(cfg.work_dir) / 'second')
+            second = Runner.from_cfg(cfg)
+        assert first.experiment_name != second.experiment_name
+        assert first.visualizer is not second.visualizer
+        assert first.logger is not second.logger
+        assert list(Path(first.log_dir).glob('*.log'))
+        assert list(Path(second.log_dir).glob('*.log'))
+
     def test_preserve_preloaded_weights(self):
         cfg = self.epoch_based_cfg
         cfg.experiment_name = self._testMethodName
