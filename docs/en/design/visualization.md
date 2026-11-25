@@ -9,7 +9,7 @@ Visualization provides an intuitive explanation of the training and testing proc
 - Able to visualize at anywhere in the training and testing process.
 - Unified APIs for all OpenMMLab libraries, which is convenient for users to understand and use.
 
-Based on the above requirements, we proposed the `Visualizer` and various `VisBackend` such as `LocalVisBackend`, `WandbVisBackend`, and `TensorboardVisBackend` in OpenMMLab 2.0. The visualizer could not only visualize the image data, but also things like configurations, scalars, and model structure.
+The Visualizer uses the built-in `TrackioVisBackend` to record images, scalars and configuration.
 
 - For convenience, the APIs provided by the `Visualizer` implement the drawing and storage functions.  As an internal property of `Visualizer`, `VisBackend` will be called by `Visualizer` to write data to different backends.
 - Considering that you may want to write data to multiple backends after drawing, `Visualizer` can be configured with multiple backends. When the user calls the storage API of the `Visualizer`, it will traverse and call all the specified APIs of `VisBackend` internally.
@@ -60,7 +60,7 @@ For more details, you can refer to [Visualizer Tutorial](../advanced_tutorials/v
 
 ## 3 VisBackend
 
-After drawing, the drawn data can be stored in multiple visualization storage backends. To unify the interfaces, MMEngine provides an abstract class, `BaseVisBackend`, and some commonly used backends such as `LocalVisBackend`, `WandbVisBackend`, and `TensorboardVisBackend`.
+`BaseVisBackend` defines the storage interface. The built-in `TrackioVisBackend` records visualizations in the experiment run.
 The main interfaces and properties of `BaseVisBackend` are as follows:
 
 - [add_config](mmengine.visualization.BaseVisBackend.add_config) writes configuration to a specific storage backend
@@ -69,8 +69,8 @@ The main interfaces and properties of `BaseVisBackend` are as follows:
 - [add_scalar](mmengine.visualization.BaseVisBackend.add_scalar) writes scalar to a specific backend
 - [add_scalars](mmengine.visualization.BaseVisBackend.add_scalars) writes multiple scalars to a specific backend at once
 - [close](mmengine.visualization.BaseVisBackend.close) closes the resource that has been opened
-- [experiment](mmengine.visualization.BaseVisBackend.experiment) writes backend objects, such as WandB objects and Tensorboard objects
+- [experiment](mmengine.visualization.BaseVisBackend.experiment) returns the native Trackio run.
 
-`BaseVisBackend` defines five common data writing interfaces. Some writing backends are very powerful, such as WandB, which could write tables and videos. Users can directly obtain the `experiment` object for such needs and then call native APIs of the corresponding backend. `LocalVisBackend`, `WandbVisBackend`, and `TensorboardVisBackend` are all inherited from `BaseVisBackend` and implement corresponding storage functions according to their features. Users can also customize `BaseVisBackend` to extend the storage backends and implement custom storage requirements.
+`BaseVisBackend` defines the storage interface. The built-in `TrackioVisBackend` records visualizations in the experiment run.
 
 For more details, you can refer to [Storage Backend Tutorial](../advanced_tutorials//visualization.md).

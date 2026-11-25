@@ -13,10 +13,12 @@ from .runtime_info_hook import RuntimeInfoHook
 from .sampler_seed_hook import DistSamplerSeedHook
 from .sync_buffer_hook import SyncBuffersHook
 from .test_time_aug_hook import PrepareTTAHook
+from .trackio_logger_hook import TrackioLoggerHook
 
 __all__ = [
     'Hook', 'IterTimerHook', 'DistSamplerSeedHook', 'ParamSchedulerHook',
     'SyncBuffersHook', 'EmptyCacheHook', 'CheckpointHook', 'LoggerHook',
-    'NaiveVisualizationHook', 'EMAHook', 'RuntimeInfoHook', 'ProfilerHook',
-    'PrepareTTAHook', 'NPUProfilerHook', 'EarlyStoppingHook'
+    'TrackioLoggerHook', 'NaiveVisualizationHook', 'EMAHook',
+    'RuntimeInfoHook', 'ProfilerHook', 'PrepareTTAHook', 'NPUProfilerHook',
+    'EarlyStoppingHook'
 ]

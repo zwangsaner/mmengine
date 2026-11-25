@@ -51,9 +51,8 @@ def fake_run(cfg):
         model=dict(type='ToyModel'),
         visualizer=dict(
             type='Visualizer',
-            vis_backends=[
-                dict(type='TensorboardVisBackend', save_dir='temp_dir')
-            ]),
+            vis_backends=[dict(type='TrackioVisBackend',
+                               save_dir='temp_dir')]),
     )
     cfg.merge_from_dict(extra_cfg)
     # build the runner from config

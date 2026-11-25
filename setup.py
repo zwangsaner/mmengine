@@ -1,7 +1,11 @@
 import os
 import re
-from importlib.metadata import PackageNotFoundError, distribution
 from setuptools import find_packages, setup  # type: ignore
+
+try:
+    from importlib.metadata import PackageNotFoundError, distribution
+except ImportError:  # Python 3.7
+    from importlib_metadata import PackageNotFoundError, distribution
 
 
 def readme():
@@ -26,9 +30,10 @@ def choose_requirement(primary, secondary):
 
 
 def get_version():
+    namespace = {}
     with open(version_file) as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
+        exec(compile(f.read(), version_file, 'exec'), namespace)
+    return namespace['__version__']
 
 
 def parse_requirements(fname='requirements/runtime.txt', with_version=True):

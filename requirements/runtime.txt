@@ -5,4 +5,5 @@ pyyaml
 regex;sys_platform=='win32'
 rich
 termcolor
+trackio>=0.20.0;python_version>='3.10'
 yapf

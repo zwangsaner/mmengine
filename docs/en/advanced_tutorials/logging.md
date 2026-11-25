@@ -264,8 +264,8 @@ runner.train()
 ```
 
 ```
-08/21 18:16:22 - mmengine - DEBUG - Get class `LocalVisBackend` from "vis_backend" registry in "mmengine"
-08/21 18:16:22 - mmengine - DEBUG - An `LocalVisBackend` instance is built from registry, its implementation can be found in mmengine.visualization.vis_backend
+08/21 18:16:22 - mmengine - DEBUG - Get class `TrackioVisBackend` from "vis_backend" registry in "mmengine"
+08/21 18:16:22 - mmengine - DEBUG - An `TrackioVisBackend` instance is built from registry, its implementation can be found in mmengine.visualization.vis_backend
 08/21 18:16:22 - mmengine - DEBUG - Get class `RuntimeInfoHook` from "hook" registry in "mmengine"
 08/21 18:16:22 - mmengine - DEBUG - An `RuntimeInfoHook` instance is built from registry, its implementation can be found in mmengine.hooks.runtime_info_hook
 08/21 18:16:22 - mmengine - DEBUG - Get class `IterTimerHook` from "hook" registry in "mmengine"

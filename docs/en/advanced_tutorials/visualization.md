@@ -5,7 +5,7 @@ Visualization provides an intuitive explanation of the training and testing proc
 MMEngine provides `Visualizer` to visualize and store the state and intermediate results of the model training and testing process, with the following features:
 
 - It supports basic drawing interface and feature map visualization
-- It enables recording training states (such as loss and lr), performance evaluation metrics, and visualization results to a specified or multiple backends, including local device, TensorBoard, and WandB.
+- It records training state, evaluation metrics and images in Trackio.
 - It can be used in any location in the code base.
 
 ## Basic Drawing APIs
@@ -205,115 +205,19 @@ visualizer.show(drawn_img)
 <img src="https://user-images.githubusercontent.com/17425982/186053653-d4d33e5d-f02e-4727-951c-880131d873dc.png" width="400"/>
 </div>
 
-## Basic Storage APIs
+## Record visualizations in Trackio
 
-Once the drawing is completed, users can choose to display the result directly or save it to different backends. The backends currently supported by MMEngine include local storage, `Tensorboard` and `WandB`. The data supported include drawn pictures, scalars, and configurations.
-
-1. Save the result image
-
-Suppose you want to save to your local device.
+Record images, scalars and configuration in the same run.
 
 ```python
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='LocalVisBackend')],
-                        save_dir='temp_dir')
-visualizer.draw_bboxes(torch.tensor([[33, 120, 209, 220], [72, 13, 179, 147]]))
-visualizer.draw_texts("cat and dog", torch.tensor([10, 20]))
-visualizer.draw_circles(torch.tensor([40, 50]), torch.tensor([20]))
+from mmengine.visualization import Visualizer
 
-# temp_dir/vis_data/vis_image/demo_0.png will be generated
-visualizer.add_image('demo', visualizer.get_image())
-```
-
-The zero in the result file name is used to distinguish different steps.
-
-```python
-# temp_dir/vis_data/vis_image/demo_1.png will be generated
-visualizer.add_image('demo', visualizer.get_image(), step=1)
-# temp_dir/vis_data/vis_image/demo_3.png will be generated
-visualizer.add_image('demo', visualizer.get_image(), step=3)
-```
-
-If you want to switch to other backends, you can change the configuration file like this:
-
-```python
-# TensorboardVisBackend
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='TensorboardVisBackend')],
-                        save_dir='temp_dir')
-# WandbVisBackend
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='WandbVisBackend')],
-                        save_dir='temp_dir')
-```
-
-2. Store feature maps
-
-```python
-visualizer = Visualizer(vis_backends=[dict(type='LocalVisBackend')],
-                        save_dir='temp_dir')
-drawn_img = visualizer.draw_featmap(feat, image, channel_reduction=None,
-                                    topk=5, arrangement=(2, 3))
-# temp_dir/vis_data/vis_image/feat_0.png will be generated
-visualizer.add_image('feat', drawn_img)
-```
-
-3. Save scalar data such as loss
-
-```python
-# temp_dir/vis_data/scalars.json will be generated
-# save loss
-visualizer.add_scalar('loss', 0.2, step=0)
-visualizer.add_scalar('loss', 0.1, step=1)
-# save acc
-visualizer.add_scalar('acc', 0.7, step=0)
-visualizer.add_scalar('acc', 0.8, step=1)
-```
-
-Multiple scalar data can also be saved at once.
-
-```python
-# New contents will be added to the temp_dir/vis_data/scalars.json
-visualizer.add_scalars({'loss': 0.3, 'acc': 0.8}, step=3)
-```
-
-4. Save configurations
-
-```python
-from mmengine import Config
-cfg=Config.fromfile('tests/data/config/py_config/config.py')
-# temp_dir/vis_data/config.py will be saved
-visualizer.add_config(cfg)
-```
-
-## Various Storage Backends
-
-Any `Visualizer` can be configured with any number of storage backends. `Visualizer` will loop through all the configured backends and save the results to each one.
-
-```python
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='TensorboardVisBackend'),
-                                      dict(type='LocalVisBackend')],
-                        save_dir='temp_dir')
-# temp_dir/vis_data/events.out.tfevents.xxx files will be generated
-visualizer.draw_bboxes(torch.tensor([[33, 120, 209, 220], [72, 13, 179, 147]]))
-visualizer.draw_texts("cat and dog", torch.tensor([10, 20]))
-visualizer.draw_circles(torch.tensor([40, 50]), torch.tensor([20]))
-
-visualizer.add_image('demo', visualizer.get_image())
-```
-
-Note: If there are multiple backends used at the same time, the `name` field must be specified. Otherwise, it is impossible to distinguish which backend it is.
-
-```python
 visualizer = Visualizer(
-    image=image,
-    vis_backends=[
-        dict(type='TensorboardVisBackend', name='tb_1', save_dir='temp_dir_1'),
-        dict(type='TensorboardVisBackend', name='tb_2', save_dir='temp_dir_2'),
-        dict(type='LocalVisBackend', name='local')
-    ],
-    save_dir='temp_dir')
+    vis_backends=[dict(type='TrackioVisBackend', init_kwargs=dict(project='detector'))],
+    save_dir='work_dirs/demo')
+visualizer.add_image('validation/example', image, step=1)
+visualizer.add_scalar('validation/accuracy', 0.91, step=1)
+visualizer.close()
 ```
 
 ## Visualize at Anywhere
@@ -326,7 +230,7 @@ Users only need to instantiate the visualizer through `get_instance` during init
 # call during the initialization stage
 visualizer1 = Visualizer.get_instance(
     name='vis',
-    vis_backends=[dict(type='LocalVisBackend')]
+    vis_backends=[dict(type='TrackioVisBackend')]
 )
 
 # call anywhere
@@ -343,33 +247,13 @@ from mmengine.registry import VISUALIZERS
 
 visualizer_cfg = dict(type='Visualizer',
                       name='vis_new',
-                      vis_backends=[dict(type='LocalVisBackend')])
+                      vis_backends=[dict(type='TrackioVisBackend')])
 VISUALIZERS.build(visualizer_cfg)
 ```
 
 ## Customize Storage Backends and Visualizers
 
-1. Call a specific storage backend
-
-The storage backend only provides basic functions such as saving configurations and scalars. However, users may want to utilize other powerful backend features like WandB and Tensorboard. Therefore, the storage backend provides the `experiment` attribute to facilitate users to obtain backend objects and meet various customized functions.
-
-For example, WandB provides an API to display tables. Users can obtain the WandB objects through the `experiment` attribute and then call a specific API to save the data as a table to show.
-
-```python
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='WandbVisBackend')],
-                        save_dir='temp_dir')
-
-# get WandB object
-wandb = visualizer.get_backend('WandbVisBackend').experiment
-# add data to the table
-table = wandb.Table(columns=["step", "mAP"])
-table.add_data(1, 0.2)
-table.add_data(2, 0.5)
-table.add_data(3, 0.9)
-# save
-wandb.log({"table": table})
-```
+1. Access the native run with `visualizer.get_backend("TrackioVisBackend").experiment` to log tables and other media.
 
 2. Customize storage backends
 
@@ -412,7 +296,7 @@ class DetLocalVisualizer(Visualizer):
         pass
 
 visualizer_cfg = dict(type='DetLocalVisualizer',
-                      vis_backends=[dict(type='WandbVisBackend')],
+                      vis_backends=[dict(type='TrackioVisBackend')],
                       name='visualizer')
 
 # global initialize

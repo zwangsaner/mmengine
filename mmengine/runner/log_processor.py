@@ -56,7 +56,7 @@ class LogProcessor:
             logging message. Defaults to 4.
         log_with_hierarchy (bool): Whether to log with hierarchy. If it is
             True, the information is written to visualizer backend such as
-            :obj:`LocalVisBackend` and :obj:`TensorboardBackend`
+            :obj:`TrackioVisBackend`
             with hierarchy. For example, ``loss`` will be saved as
             ``train/loss``, and accuracy will be saved as ``val/accuracy``.
             Defaults to False.

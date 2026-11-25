@@ -210,7 +210,7 @@ message_hub.get_info('iter')  # 2 覆盖上一次结果
 
 ### 消息枢纽的跨组件通讯
 
-执行器运行过程中，各个组件会通过消息枢纽来分发、接受消息。[RuntimeInfoHook](mmengine.hooks.RuntimeInfoHook) 会汇总其他组件更新的学习率、损失等信息，将其导出到用户指定的输出端（Tensorboard，WandB 等）。由于上述流程较为复杂，这里用一个简单示例来模拟日志钩子和其他组件通讯的过程。
+执行器运行过程中，各个组件会通过消息枢纽来分发、接受消息。[RuntimeInfoHook](mmengine.hooks.RuntimeInfoHook) 会汇总其他组件更新的学习率、损失等信息，将其导出到Trackio。由于上述流程较为复杂，这里用一个简单示例来模拟日志钩子和其他组件通讯的过程。
 
 ```python
 from mmengine import MessageHub

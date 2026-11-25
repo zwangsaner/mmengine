@@ -30,11 +30,4 @@ visualization Backend
    :template: classtemplate.rst
 
    BaseVisBackend
-   LocalVisBackend
-   MLflowVisBackend
-   TensorboardVisBackend
-   WandbVisBackend
-   ClearMLVisBackend
-   NeptuneVisBackend
-   DVCLiveVisBackend
-   AimVisBackend
+   TrackioVisBackend

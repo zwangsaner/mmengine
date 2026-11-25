@@ -210,7 +210,7 @@ message_hub.get_info('iter')  # 2, overwritten by the above command
 
 ### Share MessageHub across modules
 
-During the execution of a runner, different modules receive and post data through MessageHub. Then, [RuntimeInfoHook](mmengine.hooks.RuntimeInfoHook) gathers data such as losses and learning rates before exporting them to user defined backends (Tensorboard, WandB, etc). Following is an example to show the communication between logger hook and other modules.
+During the execution of a runner, different modules receive and post data through MessageHub. Then, [RuntimeInfoHook](mmengine.hooks.RuntimeInfoHook) gathers data such as losses and learning rates before exporting them to Trackio. Following is an example to show the communication between logger hook and other modules.
 
 ```python
 from mmengine import MessageHub

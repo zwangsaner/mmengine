@@ -187,7 +187,7 @@ MMEngine 的注册器支持层级注册，利用该功能可实现跨项目调�
 - EVALUATOR: 用于计算模型精度的一个或多个评估指标
 - TASK_UTILS: 任务强相关的一些组件，如 `AnchorGenerator`, `BboxCoder`
 - VISUALIZERS: 管理绘制模块，如 `DetVisualizer` 可在图片上绘制预测框
-- VISBACKENDS: 存储训练日志的后端，如 `LocalVisBackend`, `TensorboardVisBackend`
+- VISBACKENDS 注册实验跟踪后端，包括 `TrackioVisBackend`。
 - LOG_PROCESSORS: 控制日志的统计窗口和统计方法，默认使用 `LogProcessor`，如有特殊需求可自定义 `LogProcessor`
 - FUNCTIONS: 注册了各种函数，如 Dataloader 中传入的 `collate_fn`
 - INFERENCERS: 注册了各种任务的推理器，如 `DetInferencer`，负责检测任务的推理

@@ -9,7 +9,8 @@ from typing import Dict, Optional, Sequence, Union
 import numpy as np
 import torch
 
-from mmengine.fileio import FileClient, dump
+from mmengine.dist import is_main_process
+from mmengine.fileio import FileClient
 from mmengine.fileio.io import get_file_backend
 from mmengine.hooks import Hook
 from mmengine.logging import print_log
@@ -23,13 +24,13 @@ SUFFIX_TYPE = Union[Sequence[str], str]
 @HOOKS.register_module()
 class LoggerHook(Hook):
     """Collect logs from different components of ``Runner`` and write them to
-    terminal, JSON file, tensorboard and wandb .etc.
+    the terminal, the text log and the experiment visualizer.
 
     ``LoggerHook`` is used to record logs formatted by ``LogProcessor`` during
     training/validation/testing phase. It is used to control following
     behaviors:
 
-    - The frequency of logs update in terminal, local, tensorboad wandb.etc.
+    - How often to write text logs and record metrics in Trackio.
     - The frequency of show experiment information in terminal.
     - The work directory to save logs.
 
@@ -131,7 +132,6 @@ class LoggerHook(Hook):
         self.interval_exp_name = interval_exp_name
         self.keep_local = keep_local
         self.file_client_args = file_client_args
-        self.json_log_path: Optional[str] = None
 
         if self.out_dir is not None:
             self.file_client = FileClient.infer_client(file_client_args,
@@ -160,7 +160,8 @@ class LoggerHook(Hook):
                 f'Text logs will be saved to {self.out_dir} after the '
                 'training process.')
 
-        self.json_log_path = f'{runner.timestamp}.json'
+        if is_main_process() and runner.cfg:
+            runner.visualizer.add_config(runner.cfg)
 
     def after_train_iter(self,
                          runner,
@@ -196,8 +197,7 @@ class LoggerHook(Hook):
         else:
             return
         runner.logger.info(log_str)
-        runner.visualizer.add_scalars(
-            tag, step=runner.iter + 1, file_path=self.json_log_path)
+        runner.visualizer.add_scalars(tag, step=runner.iter + 1)
 
     def after_val_iter(self,
                        runner,
@@ -250,7 +250,7 @@ class LoggerHook(Hook):
                 metrics, and the values are corresponding results.
         """
         tag, log_str = runner.log_processor.get_log_after_epoch(
-            runner, len(runner.val_dataloader), 'val')
+            runner, len(runner.val_dataloader), "val", with_non_scalar=True)
         runner.logger.info(log_str)
         # Avoid building the training loop during standalone validation.
         if isinstance(runner._train_loop, dict) or runner._train_loop is None:
@@ -258,9 +258,8 @@ class LoggerHook(Hook):
         else:
             epoch = runner.epoch
             step = epoch if self.log_metric_by_epoch else runner.iter
-        tag['epoch'] = epoch
-        runner.visualizer.add_scalars(
-            tag, step=step, file_path=self.json_log_path)
+        tag["epoch"] = epoch
+        runner.visualizer.add_scalars(self._process_tags(tag), step=step)
 
     def after_test_epoch(self,
                          runner,
@@ -277,9 +276,15 @@ class LoggerHook(Hook):
         tag, log_str = runner.log_processor.get_log_after_epoch(
             runner, len(runner.test_dataloader), 'test', with_non_scalar=True)
         runner.logger.info(log_str)
-        dump(
-            self._process_tags(tag),
-            osp.join(runner.log_dir, self.json_log_path))  # type: ignore
+        step = 0 if runner._train_loop is None or isinstance(
+            runner._train_loop, dict) else runner.iter
+        # Include formatted statistics and metrics from runs without RuntimeInfoHook.
+        results = {**(metrics or {}), **tag}
+        values = {
+            name if name.startswith("test/") else f"test/{name}": value
+            for name, value in self._process_tags(results).items()
+        }
+        runner.visualizer.add_scalars(values, step=step)
 
     @staticmethod
     def _process_tags(tags: dict):
@@ -295,7 +300,7 @@ class LoggerHook(Hook):
             elif isinstance(value, (str, int, float, bool)) or value is None:
                 # Other supported type of json
                 return value
-            elif isinstance(value, (torch.Tensor, np.ndarray)):
+            elif isinstance(value, (torch.Tensor, np.ndarray, np.generic)):
                 return value.tolist()
             # Drop unsupported values.
 

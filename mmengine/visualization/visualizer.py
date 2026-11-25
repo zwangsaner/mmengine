@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import inspect
 import os.path as osp
+import sys
 import warnings
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -127,7 +128,7 @@ class Visualizer(ManagerMixin):
         >>> vis.draw_bboxes().draw_texts().draw_circle().draw_binary_masks()
 
         >>> # Backend related methods
-        >>> vis = Visualizer(vis_backends=[dict(type='LocalVisBackend')],
+        >>> vis = Visualizer(vis_backends=[dict(type='TrackioVisBackend')],
         >>>                                save_dir='temp_dir')
         >>> cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
         >>> vis.add_config(cfg)
@@ -185,24 +186,7 @@ class Visualizer(ManagerMixin):
                 vis_backend.setdefault('save_dir', save_dir)
                 vis_backend = VISBACKENDS.build(vis_backend)
 
-            # If vis_backend requires `save_dir` (with no default value)
-            # but is initialized with None, then don't add this
-            # vis_backend to the visualizer.
-            save_dir_arg = inspect.signature(
-                vis_backend.__class__.__init__).parameters.get('save_dir')
-            if (save_dir_arg is not None
-                    and save_dir_arg.default is save_dir_arg.empty
-                    and getattr(vis_backend, '_save_dir') is None):
-                warnings.warn(f'Failed to add {vis_backend.__class__}, '
-                              'please provide the `save_dir` argument.')
-                continue
-
-            type_name = vis_backend.__class__.__name__
-            name = name or type_name
-
-            if name in self._vis_backends:
-                raise RuntimeError(f'vis_backend name {name} already exists')
-            self._vis_backends[name] = vis_backend  # type: ignore
+            self.add_backend(vis_backend, name)
 
         self.fig_save = None
         self.fig_save_cfg = fig_save_cfg
@@ -214,6 +198,20 @@ class Visualizer(ManagerMixin):
 
         if image is not None:
             self.set_image(image)
+
+    @classmethod
+    def get_default_instance(cls, name: str, save_dir: str) -> 'Visualizer':
+        """Build the runner visualizer with a local Trackio run by default."""
+        backends = []
+        if sys.version_info >= (3, 10):
+            backends.append(
+                dict(type='TrackioVisBackend', init_kwargs=dict(name=name)))
+        else:
+            warnings.warn(
+                'Trackio requires Python 3.10 or newer. Only text logs will be recorded.'
+            )
+        return cls.get_instance(
+            name=name, vis_backends=backends, save_dir=save_dir)
 
     @property  # type: ignore
     @master_only
@@ -353,6 +351,23 @@ class Visualizer(ManagerMixin):
             self.manager = new_figure_manager(
                 num=1, FigureClass=Figure, **self.fig_show_cfg)
             self.manager.set_window_title(win_name)
+
+    def add_backend(self,
+                    backend: BaseVisBackend,
+                    name: Optional[str] = None) -> None:
+        """Attach a backend to receive subsequent visualization events."""
+        save_dir_arg = inspect.signature(
+            type(backend).__init__).parameters.get("save_dir")
+        if save_dir_arg is not None and save_dir_arg.default is save_dir_arg.empty and backend._save_dir is None:
+            warnings.warn(
+                f"Failed to add {type(backend)}, please provide the `save_dir` argument."
+            )
+            return
+
+        name = name or type(backend).__name__
+        if name in self._vis_backends:
+            raise RuntimeError(f"vis_backend name {name} already exists")
+        self._vis_backends[name] = backend
 
     @master_only
     def get_backend(self, name) -> 'BaseVisBackend':

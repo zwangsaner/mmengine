@@ -21,8 +21,7 @@ MMEngine 是一个基于 PyTorch 实现的，用于训练深度学习模型的�
 
 **覆盖主流的训练监测平台**
 
-- [TensorBoard](../common_usage/visualize_training_log.md#tensorboard) | [WandB](../common_usage/visualize_training_log.md#wandb) | [MLflow](../common_usage/visualize_training_log.md#mlflow-wip)
-- [ClearML](../common_usage/visualize_training_log.md#clearml) | [Neptune](../common_usage/visualize_training_log.md#neptune) | [DVCLive](../common_usage/visualize_training_log.md#dvclive) | [Aim](../common_usage/visualize_training_log.md#aim)
+- [Trackio](../common_usage/visualize_training_log.md)
 
 **兼容主流的训练芯片**
 
@@ -54,7 +53,7 @@ MMEngine 将训练过程中涉及的组件和它们的关系进行了抽象，�
 
 为了统一接口，OpenMMLab 2.0 中各个算法库的评测器，模型和数据之间交流的接口都使用了[数据元素（Data Element）](../advanced_tutorials/data_element.md)来进行封装。
 
-在训练、推理执行过程中，上述各个组件都可以调用日志管理模块和可视化器进行结构化和非结构化日志的存储与展示。[日志管理（Logging Modules）](../advanced_tutorials/logging.md)：负责管理执行器运行过程中产生的各种日志信息。其中消息枢纽（MessageHub）负责实现组件与组件、执行器与执行器之间的数据共享，日志处理器（Log Processor）负责对日志信息进行处理，处理后的日志会分别发送给执行器的日志器（Logger）和可视化器（Visualizer）进行日志的管理与展示。[可视化器（Visualizer）](../advanced_tutorials/visualization.md)：可视化器负责对模型的特征图、预测结果和训练过程中产生的结构化日志进行可视化，支持 Tensorboard 和 WanDB 等多种可视化后端。
+在训练、推理执行过程中，上述各个组件都可以调用日志管理模块和可视化器进行结构化和非结构化日志的存储与展示。[日志管理（Logging Modules）](../advanced_tutorials/logging.md)：负责管理执行器运行过程中产生的各种日志信息。其中消息枢纽（MessageHub）负责实现组件与组件、执行器与执行器之间的数据共享，日志处理器（Log Processor）负责对日志信息进行处理，处理后的日志会分别发送给执行器的日志器（Logger）和可视化器（Visualizer）进行日志的管理与展示。[可视化器（Visualizer）](../advanced_tutorials/visualization.md)：可视化器负责对模型的特征图、预测结果和训练过程中产生的结构化日志进行可视化，通过 Trackio 记录实验数据。
 
 ### 公共基础模块
 

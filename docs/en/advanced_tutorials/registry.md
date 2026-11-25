@@ -189,7 +189,7 @@ To easily make cross-library calls, MMEngine provides twenty two root registries
 - EVALUATOR: one or more evaluation metrics used to calculate the model accuracy.
 - TASK_UTILS: the task-intensive components, such as `AnchorGenerator`, and `BboxCoder`.
 - VISUALIZERS: the management drawing module that draws prediction boxes on images, such as `DetVisualizer`.
-- VISBACKENDS: the backend for storing training logs, such as `LocalVisBackend`, and `TensorboardVisBackend`.
+- VISBACKENDS registers experiment backends, including `TrackioVisBackend`.
 - LOG_PROCESSORS: controls the log statistics window and statistics methods, by default we use `LogProcessor`. You may customize `LogProcessor` if you have special needs.
 - FUNCTIONS: registers various functions, such as `collate_fn` in `DataLoader`.
 - INFERENCERS: registers inferencers of different tasks, such as `DetInferencer`, which is used to perform inference on the detection task.

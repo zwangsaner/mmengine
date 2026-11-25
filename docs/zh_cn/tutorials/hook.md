@@ -142,7 +142,7 @@ runner.train()
 
 ### LoggerHook
 
-[LoggerHook](mmengine.hooks.LoggerHook) 负责收集日志并把日志输出到终端或者输出到文件、TensorBoard 等后端。
+[LoggerHook](mmengine.hooks.LoggerHook) 负责收集日志并把日志通过 MMLogger 输出文本，并将实验指标写入 Trackio。
 
 如果我们希望每迭代 20 次就输出（或保存）一次日志，我们可以设置 `interval` 参数，配置如下：
 

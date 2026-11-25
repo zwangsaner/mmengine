@@ -5,7 +5,7 @@
 MMEngine 提供了 `Visualizer` 可视化器用以可视化和存储模型训练和测试过程中的状态以及中间结果，具备如下功能：
 
 - 支持基础绘图接口以及特征图可视化
-- 支持本地、TensorBoard 以及 WandB 等多种后端，可以将训练状态例如 loss 、lr 或者性能评估指标以及可视化的结果写入指定的单一或多个后端
+- 它支持将训练状态、评估指标和可视化结果写入 Trackio。
 - 允许在代码库任意位置调用，对任意位置的特征、图像和状态等进行可视化和存储。
 
 ## 基础绘制接口
@@ -202,115 +202,19 @@ visualizer.show(drawn_img)
 <img src="https://user-images.githubusercontent.com/17425982/186053653-d4d33e5d-f02e-4727-951c-880131d873dc.png" width="400"/>
 </div>
 
-## 基础存储接口
+## 写入 Trackio
 
-在绘制完成后，可以选择本地窗口显示，也可以存储到不同后端中，目前 MMEngine 内置了本地存储、Tensorboard 存储和 WandB 存储 3 个后端，且支持存储绘制后的图片、loss 等标量数据和配置文件。
-
-**(1) 存储绘制后的图片**
-
-假设存储后端为本地存储
+使用同一运行记录图片、数值和配置。
 
 ```python
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='LocalVisBackend')],
-                        save_dir='temp_dir')
-visualizer.draw_bboxes(torch.tensor([[33, 120, 209, 220], [72, 13, 179, 147]]))
-visualizer.draw_texts("cat and dog", torch.tensor([10, 20]))
-visualizer.draw_circles(torch.tensor([40, 50]), torch.tensor([20]))
+from mmengine.visualization import Visualizer
 
-# 会生成 temp_dir/vis_data/vis_image/demo_0.png
-visualizer.add_image('demo', visualizer.get_image())
-```
-
-其中生成的后缀 0 是用来区分不同 step 场景
-
-```python
-# 会生成 temp_dir/vis_data/vis_image/demo_1.png
-visualizer.add_image('demo', visualizer.get_image(), step=1)
-# 会生成 temp_dir/vis_data/vis_image/demo_3.png
-visualizer.add_image('demo', visualizer.get_image(), step=3)
-```
-
-如果想使用其他后端，则只需要修改配置文件即可
-
-```python
-# TensorboardVisBackend
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='TensorboardVisBackend')],
-                        save_dir='temp_dir')
-# 或者 WandbVisBackend
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='WandbVisBackend')],
-                        save_dir='temp_dir')
-```
-
-**(2) 存储特征图**
-
-```python
-visualizer = Visualizer(vis_backends=[dict(type='LocalVisBackend')],
-                        save_dir='temp_dir')
-drawn_img = visualizer.draw_featmap(feat, image, channel_reduction=None,
-                                    topk=5, arrangement=(2, 3))
-# 会生成 temp_dir/vis_data/vis_image/feat_0.png
-visualizer.add_image('feat', drawn_img)
-```
-
-**(3) 存储 loss 等标量数据**
-
-```python
-# 会生成 temp_dir/vis_data/scalars.json
-# 保存 loss
-visualizer.add_scalar('loss', 0.2, step=0)
-visualizer.add_scalar('loss', 0.1, step=1)
-# 保存 acc
-visualizer.add_scalar('acc', 0.7, step=0)
-visualizer.add_scalar('acc', 0.8, step=1)
-```
-
-也可以一次性保存多个标量数据
-
-```python
-# 会将内容追加到 temp_dir/vis_data/scalars.json
-visualizer.add_scalars({'loss': 0.3, 'acc': 0.8}, step=3)
-```
-
-**(4) 保存配置文件**
-
-```python
-from mmengine import Config
-cfg=Config.fromfile('tests/data/config/py_config/config.py')
-# 会生成 temp_dir/vis_data/config.py
-visualizer.add_config(cfg)
-```
-
-## 多后端存储
-
-实际上，任何一个可视化器都可以配置任意多个存储后端，可视化器会循环调用配置好的多个存储后端，从而将结果保存到多后端中。
-
-```python
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='TensorboardVisBackend'),
-                                      dict(type='LocalVisBackend')],
-                        save_dir='temp_dir')
-# 会生成 temp_dir/vis_data/events.out.tfevents.xxx 文件
-visualizer.draw_bboxes(torch.tensor([[33, 120, 209, 220], [72, 13, 179, 147]]))
-visualizer.draw_texts("cat and dog", torch.tensor([10, 20]))
-visualizer.draw_circles(torch.tensor([40, 50]), torch.tensor([20]))
-
-visualizer.add_image('demo', visualizer.get_image())
-```
-
-注意：如果多个存储后端中存在同一个类的多个后端，那么必须指定 name 字段，否则无法区分是哪个存储后端
-
-```python
 visualizer = Visualizer(
-    image=image,
-    vis_backends=[
-        dict(type='TensorboardVisBackend', name='tb_1', save_dir='temp_dir_1'),
-        dict(type='TensorboardVisBackend', name='tb_2', save_dir='temp_dir_2'),
-        dict(type='LocalVisBackend', name='local')
-    ],
-    save_dir='temp_dir')
+    vis_backends=[dict(type='TrackioVisBackend', init_kwargs=dict(project='detector'))],
+    save_dir='work_dirs/demo')
+visualizer.add_image('validation/example', image, step=1)
+visualizer.add_scalar('validation/accuracy', 0.91, step=1)
+visualizer.close()
 ```
 
 ## 任意点位进行可视化
@@ -322,7 +226,7 @@ visualizer = Visualizer(
 # 在程序初始化时候调用
 visualizer1 = Visualizer.get_instance(
     name='vis',
-    vis_backends=[dict(type='LocalVisBackend')]
+    vis_backends=[dict(type='TrackioVisBackend')]
 )
 
 # 在任何代码位置都可调用
@@ -339,32 +243,13 @@ from mmengine.registry import VISUALIZERS
 
 visualizer_cfg = dict(type='Visualizer',
                       name='vis_new',
-                      vis_backends=[dict(type='LocalVisBackend')])
+                      vis_backends=[dict(type='TrackioVisBackend')])
 VISUALIZERS.build(visualizer_cfg)
 ```
 
 ## 扩展存储后端和可视化器
 
-**(1) 调用特定存储后端**
-
-目前存储后端仅仅提供了保存配置、保存标量等基本功能，但是由于 WandB 和 Tensorboard 这类存储后端功能非常强大， 用户可能会希望利用到这类存储后端的其他功能。因此，存储后端提供了 `experiment` 属性来方便用户获取后端对象，满足各类定制化功能。
-例如 WandB 提供了表格显示的 API 接口，用户可以通过 `experiment`属性获取 WandB 对象，然后调用特定的 API 来将自定义数据保存为表格显示
-
-```python
-visualizer = Visualizer(image=image,
-                        vis_backends=[dict(type='WandbVisBackend')],
-                        save_dir='temp_dir')
-
-# 获取 WandB 对象
-wandb = visualizer.get_backend('WandbVisBackend').experiment
-# 追加表格数据
-table = wandb.Table(columns=["step", "mAP"])
-table.add_data(1, 0.2)
-table.add_data(2, 0.5)
-table.add_data(3, 0.9)
-# 保存
-wandb.log({"table": table})
-```
+1. 可以通过 `visualizer.get_backend("TrackioVisBackend").experiment` 访问原生 Trackio 运行并记录表格和其他媒体。
 
 **(2) 扩展存储后端**
 
@@ -405,7 +290,7 @@ class DetLocalVisualizer(Visualizer):
         pass
 
 visualizer_cfg = dict(type='DetLocalVisualizer',
-                      vis_backends=[dict(type='WandbVisBackend')],
+                      vis_backends=[dict(type='TrackioVisBackend')],
                       name='visualizer')
 
 # 全局初始化

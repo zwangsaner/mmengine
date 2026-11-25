@@ -3,11 +3,11 @@ import copy
 import os
 import os.path as osp
 import shutil
-from unittest.mock import ANY, MagicMock, call
+import sys
+from unittest.mock import MagicMock, call
 
 import torch
 
-from mmengine.fileio import load
 from mmengine.hooks import LoggerHook
 from mmengine.logging import MMLogger
 from mmengine.testing import RunnerTestCase
@@ -137,9 +137,7 @@ class TestLoggerHook(RunnerTestCase):
                 'datatime': 1,
                 'acc': 0.8,
                 'epoch': 2
-            },
-                 step=2,
-                 file_path=ANY),
+            }, step=2),
         ]
         self.assertEqual(
             len(calls), len(runner.visualizer.add_scalars.mock_calls))
@@ -162,9 +160,7 @@ class TestLoggerHook(RunnerTestCase):
                 'datatime': 5,
                 'acc': 0.5,
                 'epoch': 2
-            },
-                 step=10,
-                 file_path=ANY))
+            }, step=10))
         self.assertEqual(
             len(calls), len(runner.visualizer.add_scalars.mock_calls))
         runner.visualizer.add_scalars.assert_has_calls(calls)
@@ -182,10 +178,16 @@ class TestLoggerHook(RunnerTestCase):
         logger_hook.after_test_epoch(runner)
         runner.log_processor.get_log_after_epoch.assert_called()
         runner.logger.info.assert_called()
-        osp.isfile(osp.join(runner.log_dir, 'test_after_test_epoch.json'))
-        json_content = load(
-            osp.join(runner.log_dir, 'test_after_test_epoch.json'))
-        assert json_content == dict(a=1, b=2, c={'list': [1, 2]}, d=[1, 2, 3])
+        runner.visualizer.add_scalars.assert_called_once_with(
+            {
+                "test/a": 1,
+                "test/b": 2,
+                "test/c": {
+                    "list": [1, 2]
+                },
+                "test/d": [1, 2, 3]
+            },
+            step=runner.iter)
 
     def test_after_val_iter(self):
         logger_hook = LoggerHook()
@@ -210,15 +212,17 @@ class TestLoggerHook(RunnerTestCase):
         runner.log_processor.get_log_after_iter.assert_called()
 
     def test_with_runner(self):
-        # Test dumped the json exits
+        # Test the default experiment backend and text log.
         cfg = copy.deepcopy(self.epoch_based_cfg)
         cfg.default_hooks.logger = dict(type='LoggerHook')
         cfg.train_cfg.max_epochs = 10
         runner = self.build_runner(cfg)
         runner.train()
-        json_path = osp.join(runner._log_dir, 'vis_data',
-                             f'{runner.timestamp}.json')
-        self.assertTrue(osp.isfile(json_path))
+        self.assertTrue(
+            any(name.endswith(".log") for name in os.listdir(runner.log_dir)))
+        if sys.version_info >= (3, 10):
+            self.assertIsNotNone(
+                runner.visualizer.get_backend("TrackioVisBackend"))
 
         # Test out_dir
         out_dir = osp.join(cfg.work_dir, 'test')

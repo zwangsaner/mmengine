@@ -1,572 +1,119 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import os
-import platform
-import shutil
 import sys
-import warnings
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 import torch
 
-from mmengine import Config
-from mmengine.fileio import load
 from mmengine.registry import VISBACKENDS
-from mmengine.utils import digit_version, is_installed
-from mmengine.visualization import (AimVisBackend, ClearMLVisBackend,
-                                    DVCLiveVisBackend, LocalVisBackend,
-                                    MLflowVisBackend, NeptuneVisBackend,
-                                    TensorboardVisBackend, WandbVisBackend)
-
-
-class TestLocalVisBackend:
-
-    def test_init(self):
-        # 'config_save_file' format must be py
-        with pytest.raises(AssertionError):
-            LocalVisBackend('temp_dir', config_save_file='a.txt')
-
-        # 'scalar_save_file' format must be json
-        with pytest.raises(AssertionError):
-            LocalVisBackend('temp_dir', scalar_save_file='a.yaml')
-
-        local_vis_backend = VISBACKENDS.build(
-            dict(type='LocalVisBackend', save_dir='temp_dir'))
-        assert isinstance(local_vis_backend, LocalVisBackend)
-
-    def test_experiment(self):
-        local_vis_backend = LocalVisBackend('temp_dir')
-        assert local_vis_backend.experiment == local_vis_backend
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        local_vis_backend = LocalVisBackend('temp_dir')
-        local_vis_backend.add_config(cfg)
-        assert os.path.exists(local_vis_backend._config_save_file)
-        shutil.rmtree('temp_dir')
-
-    def test_add_image(self):
-        image = np.random.randint(0, 256, size=(10, 10, 3))
-        local_vis_backend = LocalVisBackend('temp_dir')
-
-        # image must be in np.uint8 format
-        with pytest.raises(AssertionError):
-            local_vis_backend.add_image('img', image)
-
-        local_vis_backend.add_image('img', image.astype(np.uint8))
-        assert os.path.exists(
-            os.path.join(local_vis_backend._img_save_dir, 'img_0.png'))
-        local_vis_backend.add_image('img', image.astype(np.uint8), step=2)
-        assert os.path.exists(
-            os.path.join(local_vis_backend._img_save_dir, 'img_2.png'))
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalar(self):
-        local_vis_backend = LocalVisBackend('temp_dir')
-        local_vis_backend.add_scalar('map', 0.9)
-        out_dict = load(local_vis_backend._scalar_save_file, 'json')
-        assert out_dict == {'map': 0.9, 'step': 0}
-        shutil.rmtree('temp_dir')
-
-        # test append mode
-        local_vis_backend = LocalVisBackend('temp_dir')
-        local_vis_backend.add_scalar('map', 1, step=0)
-        local_vis_backend.add_scalar('map', 0.95, step=1)
-        # local_vis_backend.add_scalar('map', torch.IntTensor(1), step=2)
-        local_vis_backend.add_scalar('map', np.array(0.9), step=2)
-        with open(local_vis_backend._scalar_save_file) as f:
-            out_dict = f.read()
-        assert out_dict == '{"map": 1, "step": 0}\n' \
-                           '{"map": 0.95, "step": 1}\n' \
-                           '{"map": 0.9, "step": 2}\n'
-        shutil.rmtree('temp_dir')
-
-        local_vis_backend = LocalVisBackend('temp_dir')
-        local_vis_backend.add_scalar('map', torch.tensor(1.))
-        assert os.path.exists(local_vis_backend._scalar_save_file)
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalars(self):
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        local_vis_backend = LocalVisBackend('temp_dir')
-        local_vis_backend.add_scalars(input_dict)
-        assert input_dict == {'map': 0.7, 'acc': 0.9}
-        out_dict = load(local_vis_backend._scalar_save_file, 'json')
-        assert out_dict == {'map': 0.7, 'acc': 0.9, 'step': 0}
-
-        # test append mode
-        local_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8}, step=1)
-        with open(local_vis_backend._scalar_save_file) as f:
-            out_dict = f.read()
-        assert out_dict == '{"map": 0.7, "acc": 0.9, ' \
-                           '"step": 0}\n{"map": 0.8, "acc": 0.8, "step": 1}\n'
-
-        # test file_path
-        local_vis_backend.add_scalars(input_dict, file_path='temp.json')
-        assert os.path.exists(local_vis_backend._scalar_save_file)
-        assert os.path.exists(
-            os.path.join(local_vis_backend._save_dir, 'temp.json'))
-
-        # file_path and scalar_save_file cannot be the same
-        with pytest.raises(AssertionError):
-            local_vis_backend.add_scalars(input_dict, file_path='scalars.json')
-
-        shutil.rmtree('temp_dir')
-
-
-class TestTensorboardVisBackend:
-    sys.modules['torch.utils.tensorboard'] = MagicMock()
-    sys.modules['tensorboardX'] = MagicMock()
-
-    def test_init(self):
-        TensorboardVisBackend('temp_dir')
-        VISBACKENDS.build(
-            dict(type='TensorboardVisBackend', save_dir='temp_dir'))
-
-    def test_experiment(self):
-        tensorboard_vis_backend = TensorboardVisBackend('temp_dir')
-        assert (tensorboard_vis_backend.experiment ==
-                tensorboard_vis_backend._tensorboard)
-        shutil.rmtree('temp_dir')
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        tensorboard_vis_backend = TensorboardVisBackend('temp_dir')
-        tensorboard_vis_backend.add_config(cfg)
-        shutil.rmtree('temp_dir')
-
-    def test_add_image(self):
-        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
-        tensorboard_vis_backend = TensorboardVisBackend('temp_dir')
-        tensorboard_vis_backend.add_image('img', image)
-        tensorboard_vis_backend.add_image('img', image, step=2)
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalar(self):
-        tensorboard_vis_backend = TensorboardVisBackend('temp_dir')
-        tensorboard_vis_backend.add_scalar('map', 0.9)
-        # test append mode
-        tensorboard_vis_backend.add_scalar('map', 0.9, step=0)
-        tensorboard_vis_backend.add_scalar('map', 0.95, step=1)
-        # test with numpy
-        with warnings.catch_warnings(record=True) as record:
-            tensorboard_vis_backend.add_scalar('map', np.array(0.9), step=0)
-            tensorboard_vis_backend.add_scalar('map', np.array(0.95), step=1)
-            tensorboard_vis_backend.add_scalar('map', np.array(9), step=0)
-            tensorboard_vis_backend.add_scalar('map', np.array(95), step=1)
-            tensorboard_vis_backend.add_scalar('map', np.array([9])[0], step=0)
-            tensorboard_vis_backend.add_scalar(
-                'map', np.array([95])[0], step=1)
-        assert len(record) == 0
-        # test with tensor
-        tensorboard_vis_backend.add_scalar('map', torch.tensor(0.9), step=0)
-        tensorboard_vis_backend.add_scalar('map', torch.tensor(0.95), step=1)
-        # Unprocessable data will output a warning message
-        with pytest.warns(Warning):
-            tensorboard_vis_backend.add_scalar('map', [0.95])
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalars(self):
-        tensorboard_vis_backend = TensorboardVisBackend('temp_dir')
-        # The step value must be passed through the parameter
-        with pytest.raises(AssertionError):
-            tensorboard_vis_backend.add_scalars({
-                'map': 0.7,
-                'acc': 0.9,
-                'step': 1
-            })
-
-        # Unprocessable data will output a warning message
-        with pytest.warns(Warning):
-            tensorboard_vis_backend.add_scalars({
-                'map': [1, 2],
-            })
-
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        tensorboard_vis_backend.add_scalars(input_dict)
-        # test append mode
-        tensorboard_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8}, step=1)
-        shutil.rmtree('temp_dir')
-
-    def test_close(self):
-        tensorboard_vis_backend = TensorboardVisBackend('temp_dir')
-        tensorboard_vis_backend._init_env()
-        tensorboard_vis_backend.close()
-        shutil.rmtree('temp_dir')
-
-
-class TestWandbVisBackend:
-    sys.modules['wandb'] = MagicMock()
-    sys.modules['wandb.run'] = MagicMock()
-
-    def test_init(self):
-        WandbVisBackend('temp_dir')
-        VISBACKENDS.build(dict(type='WandbVisBackend', save_dir='temp_dir'))
-
-    def test_experiment(self):
-        wandb_vis_backend = WandbVisBackend('temp_dir')
-        assert wandb_vis_backend.experiment == wandb_vis_backend._wandb
-        shutil.rmtree('temp_dir')
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        wandb_vis_backend = WandbVisBackend('temp_dir', log_code_name='code')
-        _wandb = wandb_vis_backend.experiment
-        _wandb.run.dir = 'temp_dir'
-        wandb_vis_backend.add_config(cfg)
-        shutil.rmtree('temp_dir')
-
-    def test_add_image(self):
-        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
-        wandb_vis_backend = WandbVisBackend('temp_dir')
-        wandb_vis_backend.add_image('img', image)
-        wandb_vis_backend.add_image('img', image)
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalar(self):
-        wandb_vis_backend = WandbVisBackend('temp_dir')
-        wandb_vis_backend.add_scalar('map', 0.9)
-        # test append mode
-        wandb_vis_backend.add_scalar('map', 0.9)
-        wandb_vis_backend.add_scalar('map', 0.95)
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalars(self):
-        wandb_vis_backend = WandbVisBackend('temp_dir')
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        wandb_vis_backend.add_scalars(input_dict)
-        # test append mode
-        wandb_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8})
-        wandb_vis_backend.add_scalars({'map': [0.8], 'acc': 0.8})
-        shutil.rmtree('temp_dir')
-
-    def test_close(self):
-        wandb_vis_backend = WandbVisBackend('temp_dir')
-        wandb_vis_backend._init_env()
-        wandb_vis_backend.close()
-        shutil.rmtree('temp_dir')
-
-    def test_define_metric_cfg(self):
-        # list of dict
-        define_metric_cfg = [
-            dict(name='test1', step_metric='iter'),
-            dict(name='test2', step_metric='epoch'),
-        ]
-        wandb_vis_backend = WandbVisBackend(
-            'temp_dir', define_metric_cfg=define_metric_cfg)
-        wandb_vis_backend._init_env()
-        wandb_vis_backend._wandb.define_metric.assert_any_call(
-            name='test1', step_metric='iter')
-        wandb_vis_backend._wandb.define_metric.assert_any_call(
-            name='test2', step_metric='epoch')
-
-        # dict
-        define_metric_cfg = dict(test3='max')
-        wandb_vis_backend = WandbVisBackend(
-            'temp_dir', define_metric_cfg=define_metric_cfg)
-        wandb_vis_backend._init_env()
-        wandb_vis_backend._wandb.define_metric.assert_any_call(
-            'test3', summary='max')
-
-        shutil.rmtree('temp_dir')
-
-
-class TestMLflowVisBackend:
-
-    def test_existing_run_in_external_store(self, tmp_path, monkeypatch):
-        import mlflow
-        from mlflow.tracking import MlflowClient
-
-        uri = f'sqlite:///{(tmp_path / "external.db").as_posix()}'
-        client = MlflowClient(tracking_uri=uri)
-        experiment = client.create_experiment(
-            'external', artifact_location=tmp_path.as_uri())
-        run_id = client.create_run(experiment).info.run_id
-        monkeypatch.setenv('MLFLOW_TRACKING_URI', uri)
-        monkeypatch.setenv('MLFLOW_RUN_ID', run_id)
-        backend = MLflowVisBackend(str(tmp_path / 'visualizer'))
-        try:
-            backend.add_scalar('accuracy', 0.9)
-            assert mlflow.active_run().info.run_id == run_id
-            assert client.get_run(run_id).data.metrics['accuracy'] == 0.9
-            assert not (tmp_path / 'visualizer' / 'mlflow.db').exists()
-        finally:
-            backend.close()
-
-    def test_explicit_uri_overrides_environment(self, tmp_path, monkeypatch):
-        import mlflow
-
-        explicit = f'sqlite:///{(tmp_path / "explicit.db").as_posix()}'
-        external = f'sqlite:///{(tmp_path / "external.db").as_posix()}'
-        monkeypatch.setenv('MLFLOW_TRACKING_URI', external)
-        backend = MLflowVisBackend(str(tmp_path), tracking_uri=explicit)
-        assert backend.experiment.get_tracking_uri() == explicit
-        assert os.environ['MLFLOW_TRACKING_URI'] == external
-        inherited = MLflowVisBackend(str(tmp_path))
-        assert inherited.experiment.get_tracking_uri() == external
-        assert mlflow.active_run() is None
-
-    def test_init(self):
-        MLflowVisBackend('temp_dir')
-        VISBACKENDS.build(dict(type='MLflowVisBackend', save_dir='temp_dir'))
-
-    def test_experiment(self):
-        mlflow_vis_backend = MLflowVisBackend('temp_dir')
-        assert mlflow_vis_backend.experiment == mlflow_vis_backend._mlflow
-
-    def test_create_experiment(self):
-        with patch('mlflow.create_experiment') as mock_create_experiment:
-            MLflowVisBackend(
-                'temp_dir', exp_name='test',
-                artifact_location='foo')._init_env()
-            mock_create_experiment.assert_any_call(
-                'test', artifact_location='foo')
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        mlflow_vis_backend = MLflowVisBackend('temp_dir')
-        mlflow_vis_backend.add_config(cfg)
-
-    def test_add_image(self):
-        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
-        mlflow_vis_backend = MLflowVisBackend('temp_dir')
-        mlflow_vis_backend.add_image('img.png', image)
-
-    def test_add_scalar(self):
-        mlflow_vis_backend = MLflowVisBackend('temp_dir')
-        mlflow_vis_backend.add_scalar('map', 0.9)
-        # test append mode
-        mlflow_vis_backend.add_scalar('map', 0.9)
-        mlflow_vis_backend.add_scalar('map', 0.95)
-
-    def test_add_scalars(self):
-        mlflow_vis_backend = MLflowVisBackend('temp_dir')
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        mlflow_vis_backend.add_scalars(input_dict)
-        # test append mode
-        mlflow_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8})
-
-    def test_close(self):
-        cfg = Config(dict(work_dir='temp_dir'))
-        mlflow_vis_backend = MLflowVisBackend('temp_dir')
-        mlflow_vis_backend._init_env()
-        mlflow_vis_backend.add_config(cfg)
-        mlflow_vis_backend.close()
-        shutil.rmtree('temp_dir')
-
-    def test_local_run_without_config(self, tmp_path, monkeypatch):
-        import mlflow
-        from PIL import Image
-
-        monkeypatch.setenv('MLFLOW_ALLOW_FILE_STORE', 'false')
-        backend = MLflowVisBackend(str(tmp_path))
-        image = np.zeros((3, 5, 3), dtype=np.uint8)
-        try:
-            backend.add_image('val_img', image, step=7)
-            backend.add_image('explicit.png', image, step=8)
-            run_id = mlflow.active_run().info.run_id
-            client = mlflow.tracking.MlflowClient()
-            artifact_names = {a.path for a in client.list_artifacts(run_id)}
-            assert artifact_names == {'val_img_7.png', 'explicit.png'}
-            with Image.open(
-                    client.download_artifacts(run_id,
-                                              'val_img_7.png')) as saved:
-                assert saved.size == (5, 3)
-                assert saved.format == 'PNG'
-            if digit_version(mlflow.__version__) >= digit_version('3.7.0'):
-                assert (tmp_path / 'mlflow.db').is_file()
-                assert list((tmp_path / 'artifacts').rglob('val_img_7.png'))
-            backend.close()
-            assert mlflow.active_run() is None
-        finally:
-            mlflow.end_run()
-
-
-@patch.dict(sys.modules, {'clearml': MagicMock()})
-class TestClearMLVisBackend:
-
-    def test_init(self):
-        ClearMLVisBackend('temp_dir')
-        VISBACKENDS.build(dict(type='ClearMLVisBackend', save_dir='temp_dir'))
-
-    def test_experiment(self):
-        clearml_vis_backend = ClearMLVisBackend('temp_dir')
-        assert clearml_vis_backend.experiment == clearml_vis_backend._clearml
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        clearml_vis_backend = ClearMLVisBackend('temp_dir')
-        clearml_vis_backend.add_config(cfg)
-
-    def test_add_image(self):
-        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
-        clearml_vis_backend = ClearMLVisBackend('temp_dir')
-        clearml_vis_backend.add_image('img.png', image)
-
-    def test_add_scalar(self):
-        clearml_vis_backend = ClearMLVisBackend('temp_dir')
-        clearml_vis_backend.add_scalar('map', 0.9)
-        # test append mode
-        clearml_vis_backend.add_scalar('map', 0.9)
-        clearml_vis_backend.add_scalar('map', 0.95)
-
-    def test_add_scalars(self):
-        clearml_vis_backend = ClearMLVisBackend('temp_dir')
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        clearml_vis_backend.add_scalars(input_dict)
-        # test append mode
-        clearml_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8})
-
-    def test_close(self):
-        cfg = Config(dict(work_dir='temp_dir'))
-        clearml_vis_backend = ClearMLVisBackend('temp_dir')
-        clearml_vis_backend._init_env()
-        clearml_vis_backend.add_config(cfg)
-        clearml_vis_backend.close()
-
-
-@pytest.mark.skipif(
-    not is_installed('neptune'), reason='Neptune is not installed.')
-class TestNeptuneVisBackend:
-
-    def test_init(self):
-        NeptuneVisBackend()
-        VISBACKENDS.build(dict(type='NeptuneVisBackend'))
-
-    def test_experiment(self):
-        neptune_vis_backend = NeptuneVisBackend()
-        assert neptune_vis_backend.experiment == neptune_vis_backend._neptune
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        neptune_vis_backend = NeptuneVisBackend()
-        neptune_vis_backend.add_config(cfg)
-
-    def test_add_image(self):
-        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
-        neptune_vis_backend = NeptuneVisBackend()
-        neptune_vis_backend.add_image('img', image)
-        neptune_vis_backend.add_image('img', image, step=1)
-
-    def test_add_scalar(self):
-        neptune_vis_backend = NeptuneVisBackend()
-        neptune_vis_backend.add_scalar('map', 0.9)
-        neptune_vis_backend.add_scalar('map', 0.9, step=1)
-        neptune_vis_backend.add_scalar('map', 0.95, step=2)
-
-    def test_add_scalars(self):
-        neptune_vis_backend = NeptuneVisBackend()
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        neptune_vis_backend.add_scalars(input_dict)
-
-    def test_close(self):
-        neptune_vis_backend = NeptuneVisBackend()
-        neptune_vis_backend._init_env()
-        neptune_vis_backend.close()
-
-
-@pytest.mark.skipif(
-    digit_version(platform.python_version()) < digit_version('3.8'),
-    reason='DVCLiveVisBackend does not support python version < 3.8')
-class TestDVCLiveVisBackend:
-
-    def test_reuses_parent_workspace(self, tmp_path, monkeypatch):
-        from dvc.repo import Repo
-
-        Repo.init(str(tmp_path), no_scm=True).close()
-        subdir = tmp_path / 'training'
-        subdir.mkdir()
-        monkeypatch.chdir(subdir)
-        with patch('pygit2.Repository', side_effect=KeyError), \
-                patch('os.system') as shell, patch('dvclive.Live'):
-            DVCLiveVisBackend(str(subdir / 'metrics'))._init_env()
-        shell.assert_not_called()
-        assert not (subdir / '.dvc').exists()
-        assert Repo.find_root() == str(tmp_path)
-
-    def test_init(self):
-        DVCLiveVisBackend('temp_dir')
-        VISBACKENDS.build(dict(type='DVCLiveVisBackend', save_dir='temp_dir'))
-
-    def test_experiment(self):
-        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
-        assert dvclive_vis_backend.experiment == dvclive_vis_backend._dvclive
-        shutil.rmtree('temp_dir')
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
-        dvclive_vis_backend.add_config(cfg)
-        shutil.rmtree('temp_dir')
-
-    def test_add_image(self):
-        img = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
-        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
-        dvclive_vis_backend.add_image('img', img)
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalar(self):
-        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
-        dvclive_vis_backend.add_scalar('mAP', 0.9)
-        # test append mode
-        dvclive_vis_backend.add_scalar('mAP', 0.9)
-        dvclive_vis_backend.add_scalar('mAP', 0.95)
-        shutil.rmtree('temp_dir')
-
-    def test_add_scalars(self):
-        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        dvclive_vis_backend.add_scalars(input_dict)
-        # test append mode
-        dvclive_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8})
-        shutil.rmtree('temp_dir')
-
-    def test_close(self):
-        cfg = Config(dict(work_dir='temp_dir'))
-        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
-        dvclive_vis_backend._init_env()
-        dvclive_vis_backend.add_config(cfg)
-        dvclive_vis_backend.close()
-        shutil.rmtree('temp_dir')
-
-
-@pytest.mark.skipif(
-    platform.system() == 'Windows',
-    reason='Aim does not support Windows for now.')
-class TestAimVisBackend:
-
-    def test_init(self):
-        AimVisBackend()
-        VISBACKENDS.build(dict(type='AimVisBackend'))
-
-    def test_experiment(self):
-        aim_vis_backend = AimVisBackend()
-        assert aim_vis_backend.experiment == aim_vis_backend._aim_run
-
-    def test_add_config(self):
-        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
-        aim_vis_backend = AimVisBackend()
-        aim_vis_backend.add_config(cfg)
-
-    def test_add_image(self):
-        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
-        aim_vis_backend = AimVisBackend()
-        aim_vis_backend.add_image('img', image)
-        aim_vis_backend.add_image('img', image, step=1)
-
-    def test_add_scalar(self):
-        aim_vis_backend = AimVisBackend()
-        aim_vis_backend.add_scalar('map', 0.9)
-        aim_vis_backend.add_scalar('map', 0.9, step=1)
-        aim_vis_backend.add_scalar('map', 0.95, step=2)
-
-    def test_add_scalars(self):
-        aim_vis_backend = AimVisBackend()
-        input_dict = {'map': 0.7, 'acc': 0.9}
-        aim_vis_backend.add_scalars(input_dict)
-
-    def test_close(self):
-        aim_vis_backend = AimVisBackend()
-        aim_vis_backend._init_env()
-        aim_vis_backend.close()
+from mmengine.visualization import TrackioVisBackend
+
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 10), reason="Trackio requires Python 3.10+")
+
+
+def test_trackio_backend(tmp_path, monkeypatch):
+    sdk = MagicMock()
+    monkeypatch.setitem(sys.modules, "trackio", sdk)
+    backend = TrackioVisBackend(str(tmp_path))
+    backend.close()
+    sdk.init.assert_not_called()
+    run = backend.experiment
+    sdk.init.assert_called_once_with(project="mmengine")
+    assert run is sdk.init.return_value
+
+    metrics = {
+        "loss": torch.tensor(0.5),
+        "count": np.array([3]),
+        "ratio": np.float32(0.25),
+        "invalid": object()
+    }
+    with pytest.warns(UserWarning, match="invalid"):
+        backend.add_scalars(metrics, step=12)
+    run.log.assert_called_once_with({
+        "loss": 0.5,
+        "count": 3,
+        "ratio": 0.25
+    },
+                                    step=12)
+    assert isinstance(metrics["count"], np.ndarray)
+    with pytest.raises(ValueError, match="step"):
+        backend.add_scalars({"step": 99})
+    backend.add_scalar("accuracy", 0.75, step=2)
+    run.log.assert_called_with({"accuracy": 0.75}, step=2)
+    image = np.zeros((4, 4, 3), dtype=np.uint8)
+    backend.add_image("sample", image, step=2)
+    sdk.Image.assert_called_once_with(image)
+    run.log.assert_called_with({"sample": sdk.Image.return_value}, step=2)
+    backend.close()
+    backend.close()
+    run.finish.assert_called_once_with()
+
+
+def test_missing_trackio_error(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "trackio", None)
+    backend = TrackioVisBackend(str(tmp_path))
+    with pytest.raises(ImportError, match="pip install trackio"):
+        backend.add_scalar("loss", 1)
+
+
+def test_only_trackio_is_registered():
+    assert VISBACKENDS.get("TrackioVisBackend") is TrackioVisBackend
+    for name in ("Local", "Wandb", "Tensorboard", "MLflow", "ClearML",
+                 "Neptune", "DVCLive", "Aim"):
+        assert VISBACKENDS.get(name + "VisBackend") is None
+
+
+def _record_local_experiment():
+    from pathlib import Path
+
+    from trackio.sqlite_storage import SQLiteStorage
+
+    from mmengine.testing import RunnerTestCase
+
+    case = RunnerTestCase()
+    case.setUp()
+    try:
+        cfg = case.epoch_based_cfg
+        cfg.train_cfg.max_epochs = 1
+        cfg.log_processor = dict(log_with_hierarchy=True)
+        runner = case.build_runner(cfg)
+        runner.visualizer.add_image('preview',
+                                    np.zeros((3, 4, 3), dtype=np.uint8))
+        runner.train()
+        runner.test()
+        runs = SQLiteStorage.get_runs('mmengine')
+        assert len(runs) == 1
+        rows = SQLiteStorage.get_logs('mmengine', runs[0])
+        assert any('config' in row for row in rows)
+        assert any('preview' in row for row in rows)
+        assert any('train/loss' in row and row['step'] > 0 for row in rows)
+        assert any(row.get('val/acc') == 1 for row in rows)
+        assert any(
+            row.get("test/acc") == 1 and "test/time" in row for row in rows)
+        assert list(Path(runner.log_dir).glob('*.log'))
+        assert not (Path(runner.log_dir) / 'vis_data' /
+                    'scalars.json').exists()
+    finally:
+        case.tearDown()
+
+
+def test_trackio_local_experiment(tmp_path, monkeypatch):
+    import multiprocessing
+
+    monkeypatch.setenv('TRACKIO_DIR', str(tmp_path))
+    monkeypatch.setenv('HF_HUB_OFFLINE', '1')
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '-1')
+    for key in ('TRACKIO_SPACE_ID', 'TRACKIO_SERVER_URL', 'TRACKIO_DATASET_ID',
+                'TRACKIO_BUCKET_ID'):
+        monkeypatch.delenv(key, raising=False)
+    process = multiprocessing.get_context('spawn').Process(
+        target=_record_local_experiment)
+    process.start()
+    process.join(90)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        pytest.fail('The local Trackio run did not finish')
+    assert process.exitcode == 0

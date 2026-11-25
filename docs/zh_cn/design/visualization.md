@@ -9,7 +9,7 @@
 - 能够在训练和测试流程的任意点位进行可视化
 - OpenMMLab 各个算法库具有统一可视化接口，利于用户理解和维护
 
-基于上述需求，OpenMMLab 2.0 引入了可视化对象 Visualizer 和各个可视化存储后端 VisBackend 如 `LocalVisBackend`、`WandbVisBackend` 和 `TensorboardVisBackend` 等。此处的可视化不仅仅包括图片数据格式，还包括配置内容、标量和模型图等数据的可视化。
+Visualizer 使用内置的 `TrackioVisBackend` 记录图片、标量和配置。
 
 - 为了方便调用，Visualizer 提供的接口实现了绘制和存储的功能。可视化存储后端 VisBackend 作为 Visualizer 的内部属性，会在需要的时候被 Visualizer 调用，将数据存到不同的后端
 - 考虑到绘制后会希望存储到多个后端，Visualizer 可以配置多个 VisBackend，当用户调用 Visualizer 的存储接口时候，Visualizer 内部会遍历的调用 VisBackend 存储接口
@@ -61,7 +61,7 @@
 
 ## 3 可视化存储后端 VisBackend
 
-在绘制后可以将绘制后的数据存储到多个可视化存储后端中。为了统一接口调用，MMEngine 提供了统一的抽象类 `BaseVisBackend`，和一些常用的 VisBackend 如 `LocalVisBackend`、`WandbVisBackend` 和 `TensorboardVisBackend`。
+`BaseVisBackend` 定义统一的存储接口，内置的 `TrackioVisBackend` 将绘制结果写入实验运行。
 BaseVisBackend 定义了对外调用的接口规范，主要接口和属性如下：
 
 - [add_config](mmengine.visualization.BaseVisBackend.add_config) 写配置到特定存储后端
@@ -70,7 +70,7 @@ BaseVisBackend 定义了对外调用的接口规范，主要接口和属性如�
 - [add_scalar](mmengine.visualization.BaseVisBackend.add_scalar) 写标量到特定后端
 - [add_scalars](mmengine.visualization.BaseVisBackend.add_scalars) 一次性写多个标量到特定后端
 - [close](mmengine.visualization.BaseVisBackend.close) 关闭已经打开的资源
-- [experiment](mmengine.visualization.BaseVisBackend.experiment) 写后端对象，例如 WandB 对象和 Tensorboard 对象
+- [experiment](mmengine.visualization.BaseVisBackend.experiment) 返回原生 Trackio 运行。
 
-`BaseVisBackend` 定义了 5 个常见的写数据接口，考虑到某些写后端功能非常强大，例如 WandB，其具备写表格，写视频等等功能，针对这类需求用户可以直接获取 `experiment` 对象，然后调用写后端对象本身的 API 即可。而 `LocalVisBackend`、`WandbVisBackend` 和 `TensorboardVisBackend` 等都是继承自 `BaseVisBackend`，并根据自身特性实现了对应的存储功能。用户也可以继承 `BaseVisBackend` 从而扩展存储后端，实现自定义存储需求。
+`BaseVisBackend` 定义统一的存储接口，内置的 `TrackioVisBackend` 将绘制结果写入实验运行。
 关于其用法，可以参考 [存储后端用户教程](../advanced_tutorials//visualization.md)。

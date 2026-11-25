@@ -1,14 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import torch
 import torch.distributed as torch_dist
 import torch.nn as nn
-from torch.testing._internal.common_distributed import DistributedTestBase
 
 from mmengine.dist import all_gather
 from mmengine.hooks import SyncBuffersHook
 from mmengine.registry import MODELS
+from mmengine.testing._internal import MultiProcessTestCase
 from mmengine.testing.runner_test_case import RunnerTestCase, ToyModel
 
 
@@ -26,10 +27,26 @@ class ToyModuleWithNorm(ToyModel):
         return super().init_weights()
 
 
-class TestSyncBuffersHook(DistributedTestBase, RunnerTestCase):
+class TestSyncBuffersHook(MultiProcessTestCase, RunnerTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self._spawn_processes()
+
+    def init_process_group(self):
+        backend = "gloo"
+        if torch_dist.is_nccl_available() and torch.cuda.device_count(
+        ) >= self.world_size:
+            torch.cuda.set_device(self.rank)
+            backend = "nccl"
+        torch_dist.init_process_group(
+            backend,
+            init_method=Path(self.file_name).as_uri(),
+            rank=self.rank,
+            world_size=self.world_size)
 
     def test_sync_buffers_hook(self):
-        self.create_pg('cuda')
+        self.init_process_group()
         runner = MagicMock()
         runner.model = ToyModuleWithNorm()
         runner.model.init_weights()
@@ -48,7 +65,7 @@ class TestSyncBuffersHook(DistributedTestBase, RunnerTestCase):
 
     def test_with_runner(self):
         MODELS.register_module(module=ToyModuleWithNorm, force=True)
-        self.create_pg('cuda')
+        self.init_process_group()
         RunnerTestCase.setUp(self)
         cfg = self.epoch_based_cfg
         cfg.model = dict(type='ToyModuleWithNorm')
@@ -61,6 +78,4 @@ class TestSyncBuffersHook(DistributedTestBase, RunnerTestCase):
             buffer1, buffer2 = all_gather(buffer)
             self.assertTrue(torch.allclose(buffer1, buffer2))
 
-    @property
-    def world_size(self) -> int:
-        return 2
+        RunnerTestCase.tearDown(self)

@@ -250,7 +250,7 @@ class Runner:
         >>>     env_cfg=dict(dist_cfg=dict(backend='nccl')),
         >>>     log_processor=dict(window_size=20),
         >>>     visualizer=dict(type='Visualizer',
-        >>>     vis_backends=[dict(type='LocalVisBackend',
+        >>>     vis_backends=[dict(type='TrackioVisBackend',
         >>>                        save_dir='temp_dir')])
         >>>    )
         >>> runner = Runner.from_cfg(cfg)
@@ -417,8 +417,6 @@ class Runner:
         self.message_hub = self.build_message_hub()
         # visualizer used for writing log or visualizing all kinds of data
         self.visualizer = self.build_visualizer(visualizer)
-        if self.cfg:
-            self.visualizer.add_config(self.cfg)
 
         self._load_from = load_from
         self._resume = resume
@@ -790,11 +788,8 @@ class Runner:
             Visualizer: A Visualizer object build from ``visualizer``.
         """
         if visualizer is None:
-            visualizer = dict(
-                name=self._experiment_name,
-                vis_backends=[dict(type='LocalVisBackend')],
-                save_dir=self._log_dir)
-            return Visualizer.get_instance(**visualizer)
+            return Visualizer.get_default_instance(self.experiment_name,
+                                                   self.log_dir)
 
         if isinstance(visualizer, Visualizer):
             return visualizer

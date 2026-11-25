@@ -16,7 +16,7 @@ from mmengine.dataset import DefaultSampler
 from mmengine.dist.utils import is_main_process
 from mmengine.optim import StepLR
 from mmengine.utils import apply_to
-from mmengine.visualization import Visualizer, WandbVisBackend
+from mmengine.visualization import TrackioVisBackend, Visualizer
 
 ORI_BATCH_SIZE = 4
 PROMPT_DICT = {
@@ -102,7 +102,7 @@ def train():
     visualizer = Visualizer(
         name='mmengine',
         save_dir=args.output_dir,
-        vis_backends=[dict(type=WandbVisBackend)])
+        vis_backends=[dict(type=TrackioVisBackend)])
 
     # Prepare model
     tokenizer = LlamaTokenizer.from_pretrained(args.checkpoint)

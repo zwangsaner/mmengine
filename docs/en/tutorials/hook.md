@@ -25,7 +25,7 @@ Each hook has a corresponding priority. At each mount point, hooks with higher p
 |     [RuntimeInfoHook](#runtimeinfohook)     |                                     update runtime information into message hub                                      |  VERY_HIGH (10)   |
 |       [IterTimerHook](#itertimerhook)       |                               Update the time spent during iteration into message hub                                |    NORMAL (50)    |
 | [DistSamplerSeedHook](#distsamplerseedhook) |                                     Ensure distributed Sampler shuffle is active                                     |    NORMAL (50)    |
-|          [LoggerHook](#loggerhook)          | Collect logs from different components of `Runner` and write them to terminal, JSON file, tensorboard and wandb .etc | BELOW_NORMAL (60) |
+|          [LoggerHook](#loggerhook)          | Collect logs from different components of `Runner` and write text logs with MMLogger and metrics to Trackio | BELOW_NORMAL (60) |
 |  [ParamSchedulerHook](#paramschedulerhook)  |                                      update some hyper-parameters of optimizer                                       |     LOW (70)      |
 |      [CheckpointHook](#checkpointhook)      |                                            Save checkpoints periodically                                             |   VERY_LOW (90)   |
 
@@ -61,7 +61,7 @@ runner.train()
 
 ### LoggerHook
 
-[LoggerHook](mmengine.hooks.LoggerHook) collects logs from different components of `Runner` and write them to terminal, JSON file, tensorboard and wandb, etc.
+[LoggerHook](mmengine.hooks.LoggerHook) collects logs from different components of `Runner` and write text logs with MMLogger and metrics to Trackio
 
 ### CheckpointHook
 
@@ -139,7 +139,7 @@ The six features mentioned above are described below.
   default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=2, save_begin=5))
   ```
 
-[LoggerHook](mmengine.hooks.LoggerHook) collects logs from different components of `Runner` and write them to terminal, JSON file, tensorboard and wandb .etc.
+[LoggerHook](mmengine.hooks.LoggerHook) collects logs from different components of `Runner` and write text logs with MMLogger and metrics to Trackio
 
 If we want to output (or save) the logs every 20 iterations, we can set the `interval` parameter and configure it as follows.
 

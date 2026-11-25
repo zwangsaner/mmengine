@@ -15,6 +15,7 @@ mmengine.hooks
    CheckpointHook
    EMAHook
    LoggerHook
+   TrackioLoggerHook
    NaiveVisualizationHook
    ParamSchedulerHook
    RuntimeInfoHook

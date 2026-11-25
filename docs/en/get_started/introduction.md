@@ -22,8 +22,7 @@ PyTorch. It supports running on Linux, Windows, and macOS. Its highlights are as
 
 **Covers mainstream training monitoring platforms**
 
-- [TensorBoard](../common_usage/visualize_training_log.md#tensorboard) | [WandB](../common_usage/visualize_training_log.md#wandb) | [MLflow](../common_usage/visualize_training_log.md#mlflow-wip)
-- [ClearML](../common_usage/visualize_training_log.md#clearml) | [Neptune](../common_usage/visualize_training_log.md#neptune) | [DVCLive](../common_usage/visualize_training_log.md#dvclive) | [Aim](../common_usage/visualize_training_log.md#aim)
+- [Trackio](../common_usage/visualize_training_log.md)
 
 ## Architecture
 
@@ -90,8 +89,7 @@ the Log Processor processes the log information. The processed logs are then
 sent to the `Logger` and `Visualizer` for management and display. The
 [`Visualizer`](../advanced_tutorials/visualization.md) is responsible for
 visualizing the model's feature maps, prediction results, and structured logs
-generated during the training process. It supports multiple visualization
-backends such as TensorBoard and WanDB.
+generated during the training process. It records experiment data in Trackio.
 
 ### Common Base Modules
 
