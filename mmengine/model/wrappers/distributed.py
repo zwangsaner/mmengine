@@ -125,6 +125,24 @@ class MMDistributedDataParallel(DistributedDataParallel):
             detect_anomalous_params(parsed_loss, model=self)
         return log_vars
 
+    @torch.no_grad()
+    def sync_batchnorm_buffers(self) -> None:
+        """Use the checkpoint rank's BatchNorm statistics for evaluation."""
+        buffers = []
+        ignored = getattr(self.module, '_ddp_params_and_buffers_to_ignore', ())
+        for prefix, module in self.module.named_modules():
+            if not isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                continue
+            for name in ('running_mean', 'running_var', 'num_batches_tracked'):
+                buffer = getattr(module, name, None)
+                key = f'{prefix}.{name}' if prefix else name
+                if buffer is not None and key not in ignored:
+                    buffers.append(buffer)
+        if buffers:
+            # As in DDP's initial broadcast, rank 0 is group-relative.
+            torch.distributed._broadcast_coalesced(
+                self.process_group, buffers, self.broadcast_bucket_size, 0)
+
     def val_step(self, data: Union[dict, tuple, list]) -> list:
         """Gets the prediction of module during validation process.
 

@@ -179,6 +179,9 @@ class FlexibleRunner:
             Defaults to None.
 
     Note:
+        Set ``cfg.init_weights_for_train = False`` to preserve weights
+        loaded before training. Defaults to True.
+
         Since PyTorch 2.0.0, you can enable ``torch.compile`` by passing in
         `compile = True`. If you want to control compile options, you
         can pass a dict, e.g. ``cfg.compile = dict(backend='eager')``.
@@ -1173,6 +1176,7 @@ class FlexibleRunner:
             compile.setdefault('target', 'train_step')
 
         dispatch_kwargs = dict(
+            init_weights_for_train=self.cfg.get('init_weights_for_train', True),
             epoch_length=len(self.train_dataloader),
             max_epochs=self.max_epochs,
             max_iters=self.max_iters,

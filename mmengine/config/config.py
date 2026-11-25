@@ -1462,7 +1462,11 @@ class Config:
 
     @property
     def pretty_text(self) -> str:
-        """Get formatted python config text."""
+        """Get formatted Python config text.
+
+        Runtime objects whose display text is not a Python expression are
+        recorded as strings. Their live instances stay in the config.
+        """
         import yapf
         from yapf.yapflib.yapf_api import FormatCode
 
@@ -1478,12 +1482,20 @@ class Config:
             s = first + '\n' + s
             return s
 
-        def _format_basic_types(k, v, use_mapping=False):
-            if isinstance(v, str):
-                v_str = repr(v)
-            else:
-                v_str = str(v)
+        def _format_value(value):
+            if isinstance(value, str):
+                return repr(value)
+            text = str(value)
+            if value is None or type(value) in (bool, int, float, complex):
+                return text
+            try:
+                ast.parse(text, mode='eval')
+            except SyntaxError:
+                return repr(text)
+            return text
 
+        def _format_basic_types(k, v, use_mapping=False):
+            v_str = _format_value(v)
             if use_mapping:
                 k_str = f"'{k}'" if isinstance(k, str) else str(k)
                 attr_str = f'{k_str}: {v_str}'
@@ -1510,10 +1522,8 @@ class Config:
                     v_str += f'{_indent(_format_list_tuple(None, item), indent)},\n'  # noqa: 501
                 elif isinstance(item, list):
                     v_str += f'{_indent(_format_list_tuple(None, item), indent)},\n'  # noqa: 501
-                elif isinstance(item, str):
-                    v_str += f'{_indent(repr(item), indent)},\n'
                 else:
-                    v_str += str(item) + ',\n'
+                    v_str += _format_value(item) + ',\n'
             if k is None:
                 return _indent(v_str, indent) + right
             if use_mapping:

@@ -415,6 +415,7 @@ class DeepSpeedStrategy(BaseStrategy):
         *,
         map_location: Union[str, Callable] = 'cpu',
         strict: bool = False,
+        load_module_only: bool = True,
         revise_keys: list = [(r'^module.', '')],
         callback: Optional[Callable] = None,
     ) -> dict:
@@ -426,19 +427,19 @@ class DeepSpeedStrategy(BaseStrategy):
         Args:
             filename (str): Accept local filepath, URL, ``torchvision://xxx``,
                 ``open-mmlab://xxx``.
+            strict (bool): Require checkpoint keys to match the model.
+            load_module_only (bool): Load only the module for fine-tuning.
+                Defaults to True. Use :meth:`resume` to restore training.
         """
         self.logger.info(f'Load checkpoint from {filename}')
 
         dirname, basename = osp.split(filename)
-        if digit_version(deepspeed.__version__) >= digit_version('0.13.2'):
-            _, extra_ckpt = self.model.load_checkpoint(
-                dirname,
-                tag=basename,
-                load_optimizer_states=False,
-                load_module_strict=not self.exclude_frozen_parameters)
-        else:
-            _, extra_ckpt = self.model.load_checkpoint(
-                dirname, tag=basename, load_optimizer_states=False)
+        _, extra_ckpt = self.model.load_checkpoint(
+            dirname,
+            tag=basename,
+            load_module_strict=strict,
+            load_optimizer_states=False,
+            load_module_only=load_module_only)
 
         return extra_ckpt
 

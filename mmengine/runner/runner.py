@@ -200,6 +200,9 @@ class Runner:
             Defaults to None.
 
     Note:
+        Set ``cfg.init_weights_for_train = False`` to train a model whose
+        weights were loaded before calling :meth:`train`. Defaults to True.
+
         Since PyTorch 2.0.0, you can enable ``torch.compile`` by passing in
         `cfg.compile = True`. If you want to control compile options, you
         can pass a dict, e.g. ``cfg.compile = dict(backend='eager')``.
@@ -920,7 +923,8 @@ class Runner:
         model = self.model.module if is_model_wrapper(
             self.model) else self.model
         if hasattr(model, 'init_weights'):
-            model.init_weights()
+            if self.cfg.get('init_weights_for_train', True):
+                model.init_weights()
             # sync params and buffers
             for name, params in model.state_dict().items():
                 broadcast(params)

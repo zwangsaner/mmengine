@@ -59,7 +59,15 @@ class BaseAveragedModel(nn.Module):
                  device: Optional[torch.device] = None,
                  update_buffers: bool = False) -> None:
         super().__init__()
-        self.module = deepcopy(model).requires_grad_(False)
+        # SyncBatchNorm layers keep a live communicator. Both models must
+        # use the same group while owning independent parameters and buffers.
+        group_type = getattr(torch.distributed, 'ProcessGroup', ())
+        memo = {
+            id(value): value
+            for module in model.modules() for value in vars(module).values()
+            if isinstance(value, group_type)
+        }
+        self.module = deepcopy(model, memo).requires_grad_(False)
         self.interval = interval
         if device is not None:
             self.module = self.module.to(device)

@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 
 from mmengine.evaluator import Evaluator
 from mmengine.logging import HistoryBuffer, print_log
+from mmengine.model import MMDistributedDataParallel
 from mmengine.registry import LOOPS
 from mmengine.structures import BaseDataElement
 from mmengine.utils import is_list_of
@@ -396,7 +397,7 @@ class ValLoop(BaseLoop):
         """Launch validation."""
         self.runner.call_hook('before_val')
         self.runner.call_hook('before_val_epoch')
-        self.runner.model.eval()
+        _prepare_for_eval(self.runner.model)
 
         # clear val loss
         self.val_loss.clear()
@@ -480,7 +481,7 @@ class TestLoop(BaseLoop):
         """Launch test."""
         self.runner.call_hook('before_test')
         self.runner.call_hook('before_test_epoch')
-        self.runner.model.eval()
+        _prepare_for_eval(self.runner.model)
 
         # clear test loss
         self.test_loss.clear()
@@ -519,6 +520,15 @@ class TestLoop(BaseLoop):
             batch_idx=idx,
             data_batch=data_batch,
             outputs=outputs)
+
+
+def _prepare_for_eval(model: torch.nn.Module) -> None:
+    model.eval()
+    # val_step/test_step bypass DDP.forward. Synchronize once per loop so
+    # workers with different numbers of evaluation batches can still finish.
+    for module in model.modules():
+        if isinstance(module, MMDistributedDataParallel):
+            module.sync_batchnorm_buffers()
 
 
 def _parse_losses(losses: Dict[str, HistoryBuffer],

@@ -1,13 +1,39 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import itertools
+from datetime import timedelta
 from unittest import TestCase
 
+import pytest
 import torch
 
 from mmengine.logging import MMLogger
 from mmengine.model import (ExponentialMovingAverage, MomentumAnnealingEMA,
                             StochasticWeightAverage)
 from mmengine.testing import assert_allclose
+
+
+@pytest.mark.skipif(not torch.distributed.is_available()
+                    or not torch.distributed.is_gloo_available(), reason='Gloo')
+def test_ema_shares_only_the_process_group(tmp_path):
+    dist = torch.distributed
+    dist.init_process_group(
+        'gloo', init_method=(tmp_path / 'world').as_uri(), rank=0,
+        world_size=1, timeout=timedelta(seconds=30))
+    try:
+        group = dist.new_group([0])
+        bn = torch.nn.SyncBatchNorm(2, process_group=group)
+        model = torch.nn.Sequential(bn)
+        model.group = group  # MMCV SyncBatchNorm stores its group here.
+        ema = ExponentialMovingAverage(model)
+        assert ema.module.group is group
+        assert ema.module[0].process_group is group
+        assert ema.module[0].weight is not bn.weight
+        assert ema.module[0].running_mean.data_ptr() != bn.running_mean.data_ptr()
+        bn.running_mean.fill_(2)
+        ema.update_parameters(model)
+        assert torch.equal(ema.module[0].running_mean, bn.running_mean)
+    finally:
+        dist.destroy_process_group()
 
 
 class TestAveragedModel(TestCase):

@@ -1440,6 +1440,30 @@ class TestRunner(TestCase):
         log_processor = runner.build_log_processor(cfg)
         self.assertIsInstance(log_processor, CustomLogProcessor)
 
+    def test_preserve_preloaded_weights(self):
+        cfg = self.epoch_based_cfg
+        cfg.experiment_name = self._testMethodName
+        cfg.init_weights_for_train = False
+        cfg.train_cfg.max_epochs = 1
+        runner = Runner.from_cfg(cfg)
+
+        class PreloadedLinear(nn.Linear):
+            def init_weights(self):
+                nn.init.zeros_(self.weight)
+
+        class CheckFirstBatch(Hook):
+            def before_train_iter(self, runner, batch_idx, data_batch=None):
+                if batch_idx == 0:
+                    weight = runner.model.linear1.weight
+                    assert torch.all(weight == 7)
+
+        layer = PreloadedLinear(2, 2).to(runner.model.linear1.weight.device)
+        layer.load_state_dict(dict(weight=torch.full_like(layer.weight, 7),
+                                   bias=torch.zeros_like(layer.bias)))
+        runner.model.linear1 = layer
+        runner.register_hook(CheckFirstBatch())
+        runner.train()
+
     def test_train(self):
         # 1. test `self.train_loop` is None
         cfg = copy.deepcopy(self.epoch_based_cfg)

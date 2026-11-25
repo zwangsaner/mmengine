@@ -274,6 +274,39 @@ class TestWandbVisBackend:
 
 class TestMLflowVisBackend:
 
+    def test_existing_run_in_external_store(self, tmp_path, monkeypatch):
+        import mlflow
+        from mlflow.tracking import MlflowClient
+
+        uri = f'sqlite:///{(tmp_path / "external.db").as_posix()}'
+        client = MlflowClient(tracking_uri=uri)
+        experiment = client.create_experiment(
+            'external', artifact_location=tmp_path.as_uri())
+        run_id = client.create_run(experiment).info.run_id
+        monkeypatch.setenv('MLFLOW_TRACKING_URI', uri)
+        monkeypatch.setenv('MLFLOW_RUN_ID', run_id)
+        backend = MLflowVisBackend(str(tmp_path / 'visualizer'))
+        try:
+            backend.add_scalar('accuracy', 0.9)
+            assert mlflow.active_run().info.run_id == run_id
+            assert client.get_run(run_id).data.metrics['accuracy'] == 0.9
+            assert not (tmp_path / 'visualizer' / 'mlflow.db').exists()
+        finally:
+            backend.close()
+
+    def test_explicit_uri_overrides_environment(self, tmp_path, monkeypatch):
+        import mlflow
+
+        explicit = f'sqlite:///{(tmp_path / "explicit.db").as_posix()}'
+        external = f'sqlite:///{(tmp_path / "external.db").as_posix()}'
+        monkeypatch.setenv('MLFLOW_TRACKING_URI', external)
+        backend = MLflowVisBackend(str(tmp_path), tracking_uri=explicit)
+        assert backend.experiment.get_tracking_uri() == explicit
+        assert os.environ['MLFLOW_TRACKING_URI'] == external
+        inherited = MLflowVisBackend(str(tmp_path))
+        assert inherited.experiment.get_tracking_uri() == external
+        assert mlflow.active_run() is None
+
     def test_init(self):
         MLflowVisBackend('temp_dir')
         VISBACKENDS.build(dict(type='MLflowVisBackend', save_dir='temp_dir'))
@@ -437,6 +470,20 @@ class TestNeptuneVisBackend:
     digit_version(platform.python_version()) < digit_version('3.8'),
     reason='DVCLiveVisBackend does not support python version < 3.8')
 class TestDVCLiveVisBackend:
+
+    def test_reuses_parent_workspace(self, tmp_path, monkeypatch):
+        from dvc.repo import Repo
+
+        Repo.init(str(tmp_path), no_scm=True).close()
+        subdir = tmp_path / 'training'
+        subdir.mkdir()
+        monkeypatch.chdir(subdir)
+        with patch('pygit2.Repository', side_effect=KeyError), \
+                patch('os.system') as shell, patch('dvclive.Live'):
+            DVCLiveVisBackend(str(subdir / 'metrics'))._init_env()
+        shell.assert_not_called()
+        assert not (subdir / '.dvc').exists()
+        assert Repo.find_root() == str(tmp_path)
 
     def test_init(self):
         DVCLiveVisBackend('temp_dir')

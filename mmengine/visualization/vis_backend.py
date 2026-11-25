@@ -663,7 +663,8 @@ class MLflowVisBackend(BaseVisBackend):
             Defaults to None.
         params (dict, optional): The params to be added to the experiment.
             Defaults to None.
-        tracking_uri (str, optional): The tracking URI. With MLflow 3.7+
+        tracking_uri (str, optional): The tracking URI. Defaults to
+            ``MLFLOW_TRACKING_URI`` when set. With MLflow 3.7+
             the local default is a SQLite database in `save_dir` and a
             local experiment named `MMEngine`. Older clients use a file store.
         artifact_suffix (Tuple[str] or str, optional): The artifact suffix.
@@ -722,8 +723,13 @@ class MLflowVisBackend(BaseVisBackend):
             if handler.stream is None or handler.stream.closed:
                 handler.stream = open(handler.baseFilename, 'a')
 
-        tracking_uri = self._tracking_uri
-        if tracking_uri is None:
+        env_uri = os.getenv('MLFLOW_TRACKING_URI')
+        tracking_uri = self._tracking_uri or env_uri
+        run_id = os.getenv('MLFLOW_RUN_ID')
+        if tracking_uri is None and run_id:
+            tracking_uri = mlflow.get_tracking_uri()
+        use_local_default = tracking_uri is None
+        if use_local_default:
             save_dir = Path(self._save_dir).resolve()
             legacy_store = (save_dir / '0' / 'meta.yaml').is_file()
             allow_file_store = os.getenv('MLFLOW_ALLOW_FILE_STORE',
@@ -748,8 +754,19 @@ class MLflowVisBackend(BaseVisBackend):
             else:
                 tracking_uri = save_dir.as_uri()
         self._mlflow.set_tracking_uri(tracking_uri)
+        if use_local_default:
+            # MLflow exports its URI to the environment. A later backend
+            # with another save_dir must still get its own local default.
+            os.environ.pop('MLFLOW_TRACKING_URI', None)
+        elif env_uri is not None and env_uri != tracking_uri:
+            os.environ['MLFLOW_TRACKING_URI'] = env_uri
 
-        self._exp_name = self._exp_name or 'Default'
+        if self._exp_name is None:
+            run = mlflow.active_run()
+            if run is None and run_id:
+                run = mlflow.get_run(run_id)
+            self._exp_name = (mlflow.get_experiment(run.info.experiment_id).name
+                              if run is not None else 'Default')
 
         if self._mlflow.get_experiment_by_name(self._exp_name) is None:
             self._mlflow.create_experiment(
@@ -1205,16 +1222,24 @@ class DVCLiveVisBackend(BaseVisBackend):
 
         try:
             import pygit2
+            from dvc.exceptions import NotDvcRepoError
+            from dvc.repo import Repo
             from dvclive import Live
         except ImportError:
             raise ImportError(
                 'Please run "pip install dvclive" to install dvclive')
-        # if no git info, init dvc without git to avoid SCMError
+        # A parent DVC workspace also owns stages run from a subdirectory.
         try:
-            path = pygit2.discover_repository(os.fspath(os.curdir), True, '')
-            pygit2.Repository(path).default_signature
-        except KeyError:
-            os.system('dvc init -f --no-scm')
+            Repo.find_root()
+        except NotDvcRepoError:
+            git_dir = pygit2.discover_repository(os.curdir)
+            if git_dir:
+                try:
+                    pygit2.Repository(git_dir).default_signature
+                except KeyError:
+                    git_dir = None
+            if not git_dir:
+                Repo.init(no_scm=True).close()
 
         if self._init_kwargs is None:
             self._init_kwargs = {}

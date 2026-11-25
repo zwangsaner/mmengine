@@ -303,6 +303,20 @@ class TestConfig:
         text_cfg = Config.fromfile(text_cfg_filename)
         assert text_cfg._cfg_dict == cfg._cfg_dict
 
+    def test_dump_runtime_optimizer(self, tmp_path):
+        import torch
+
+        optimizer = torch.optim.SGD(torch.nn.Linear(1, 1).parameters(), lr=.1)
+        cfg = Config(dict(optim_wrapper=dict(optimizer=optimizer),
+                          objects=[optimizer]))
+        path = tmp_path / 'runtime.py'
+        cfg.dump(path)
+        assert path.read_text() == cfg.pretty_text
+        saved = Config.fromfile(path)
+        assert saved.optim_wrapper.optimizer == str(optimizer)
+        assert saved.objects == [str(optimizer)]
+        assert cfg.optim_wrapper.optimizer is optimizer
+
     def test_repr(self, tmp_path):
         cfg_file = osp.join(self.data_path,
                             'config/py_config/simple_config.py')

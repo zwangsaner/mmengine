@@ -344,8 +344,10 @@ class BaseStrategy(metaclass=ABCMeta):
     def _init_model_weights(self, model: nn.Module) -> nn.Module:
         """Initialize the model weights if the model has
         :meth:`init_weights`"""
-        if (hasattr(model, 'init_weights') and self.dispatch_kwargs.get(
-                'init_weights_for_test_or_val', True)):
+        init_weights = self.dispatch_kwargs.get(
+            'init_weights_for_train',
+            self.dispatch_kwargs.get('init_weights_for_test_or_val', True))
+        if hasattr(model, 'init_weights') and init_weights:
             model.init_weights()
             # sync params and buffers
             for _, params in model.state_dict().items():
