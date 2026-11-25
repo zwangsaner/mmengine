@@ -1484,6 +1484,8 @@ class Config:
             return s
 
         def _format_value(value):
+            if isinstance(value, os.PathLike):
+                return repr(os.fspath(value))
             if isinstance(value, str) or value is None or type(value) in (
                     int, bool, bytes, bytearray, range):
                 return repr(value)

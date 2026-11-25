@@ -325,7 +325,10 @@ class TestConfig:
         objects = [
             torch.device('cpu'),
             Path('data/train'),
-            torch.tensor([0, 1])
+            torch.tensor([0, 1]),
+            Path('123'),
+            Path('False'),
+            Path('None'),
         ]
         config = Config(
             dict(objects=objects, device=objects[0], loss_floor=float('-inf')))
