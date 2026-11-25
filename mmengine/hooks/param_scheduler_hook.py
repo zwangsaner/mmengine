@@ -41,7 +41,10 @@ class ParamSchedulerHook(Hook):
             assert isinstance(param_schedulers, list)
             for scheduler in param_schedulers:
                 if not scheduler.by_epoch:
-                    scheduler.step()
+                    if isinstance(scheduler, _ParamScheduler):
+                        scheduler.step_after_optimizer()
+                    else:
+                        scheduler.step()
 
         if isinstance(runner.param_schedulers, list):
             step(runner.param_schedulers)

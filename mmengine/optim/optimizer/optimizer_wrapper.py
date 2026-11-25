@@ -399,6 +399,11 @@ class OptimWrapper(BaseOptimWrapper):
         return loss
 
     @property
+    def accumulative_counts(self) -> int:
+        """Number of mini-batches accumulated per optimizer update."""
+        return self._accumulative_counts
+
+    @property
     def inner_count(self):
         """Get the number of updating parameters of optimizer wrapper."""
         return self._inner_count

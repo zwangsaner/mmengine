@@ -8,6 +8,8 @@ from math import inf
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Union
 
+from torch import Tensor
+
 from mmengine.dist import is_main_process, master_only
 from mmengine.fileio import FileClient, get_file_backend
 from mmengine.logging import print_log
@@ -150,6 +152,7 @@ class CheckpointHook(Hook):
         self.by_epoch = by_epoch
         self.save_optimizer = save_optimizer
         self.save_param_scheduler = save_param_scheduler
+        self._configured_out_dir = out_dir
         self.out_dir = out_dir  # type: ignore
         self.max_keep_ckpts = max_keep_ckpts
         self.save_last = save_last
@@ -255,17 +258,11 @@ class CheckpointHook(Hook):
                 'save_begin should not be less than 0, but got {save_begin}')
         self.save_begin = save_begin
 
-    def before_train(self, runner) -> None:
-        """Finish all operations, related to checkpoint.
-
-        This function will get the appropriate file client, and the directory
-        to save these checkpoints of the model.
-
-        Args:
-            runner (Runner): The runner of the training process.
-        """
-        if self.out_dir is None:
-            self.out_dir = runner.work_dir
+    def _init_checkpoint_state(self, runner) -> None:
+        """Set up storage and restore the paths of best checkpoints."""
+        self.out_dir = (
+            self._configured_out_dir
+            if self._configured_out_dir is not None else runner.work_dir)
 
         # If self.file_client_args is None, self.file_client will not
         # used in CheckpointHook. To avoid breaking backward compatibility,
@@ -307,6 +304,12 @@ class CheckpointHook(Hook):
                             key_indicator] = runner.message_hub.get_info(
                                 best_ckpt_name)
 
+    def before_val(self, runner) -> None:
+        if self.save_best and not hasattr(self, 'file_backend'):
+            self._init_checkpoint_state(runner)
+
+    def before_train(self, runner) -> None:
+        self._init_checkpoint_state(runner)
         if self.max_keep_ckpts > 0:
             keep_ckpt_ids = []
             if 'keep_ckpt_ids' in runner.message_hub.runtime_info:
@@ -485,14 +488,14 @@ class CheckpointHook(Hook):
         if not self.save_best:
             return
 
-        if self.by_epoch:
-            ckpt_filename = self.filename_tmpl.format(runner.epoch)
-            cur_type, cur_time = 'epoch', runner.epoch
-        else:
-            ckpt_filename = self.filename_tmpl.format(runner.iter)
-            cur_type, cur_time = 'iter', runner.iter
-
-        meta = dict(epoch=runner.epoch, iter=runner.iter)
+        # Standalone validation can run without building the training loop.
+        train_loop = runner._train_loop
+        meta = dict(
+            epoch=getattr(train_loop, 'epoch', 0),
+            iter=getattr(train_loop, 'iter', 0))
+        cur_type = 'epoch' if self.by_epoch else 'iter'
+        cur_time = meta[cur_type]
+        ckpt_filename = self.filename_tmpl.format(cur_time)
 
         # handle auto in self.key_indicators and self.rules before the loop
         if 'auto' in self.key_indicators:
@@ -518,6 +521,11 @@ class CheckpointHook(Hook):
             else:
                 best_score = runner.message_hub.get_info(best_score_key)
 
+            # Checkpoints can restore a tensor metric to a different device.
+            if isinstance(key_score, Tensor):
+                key_score = key_score.item()
+            if isinstance(best_score, Tensor):
+                best_score = best_score.item()
             if key_score is None or not self.is_better_than[key_indicator](
                     key_score, best_score):
                 continue

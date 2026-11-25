@@ -120,6 +120,7 @@ class TestLoggerHook(RunnerTestCase):
     def test_after_val_epoch(self):
         logger_hook = LoggerHook()
         runner = MagicMock()
+        runner.epoch, runner.iter = 2, 10
         # Test when `log_metric_by_epoch` is True
         runner.log_processor.get_log_after_epoch = MagicMock(
             return_value=({
@@ -130,13 +131,15 @@ class TestLoggerHook(RunnerTestCase):
         logger_hook.after_val_epoch(runner)
 
         # expect visualizer log `time` and `metric` respectively
-        args = {'step': ANY, 'file_path': ANY}
         calls = [
             call({
                 'time': 1,
                 'datatime': 1,
-                'acc': 0.8
-            }, **args),
+                'acc': 0.8,
+                'epoch': 2
+            },
+                 step=2,
+                 file_path=ANY),
         ]
         self.assertEqual(
             len(calls), len(runner.visualizer.add_scalars.mock_calls))
@@ -153,18 +156,15 @@ class TestLoggerHook(RunnerTestCase):
         logger_hook.after_val_epoch(runner)
 
         # expect visualizer log `time` and `metric` jointly
-        calls = [
-            call({
-                'time': 1,
-                'datatime': 1,
-                'acc': 0.8
-            }, **args),
+        calls.append(
             call({
                 'time': 5,
                 'datatime': 5,
-                'acc': 0.5
-            }, **args),
-        ]
+                'acc': 0.5,
+                'epoch': 2
+            },
+                 step=10,
+                 file_path=ANY))
         self.assertEqual(
             len(calls), len(runner.visualizer.add_scalars.mock_calls))
         runner.visualizer.add_scalars.assert_has_calls(calls)

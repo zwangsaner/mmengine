@@ -8,6 +8,7 @@ import platform
 import warnings
 from abc import ABCMeta, abstractmethod
 from collections.abc import MutableMapping
+from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence, Union
 
 import cv2
@@ -662,7 +663,9 @@ class MLflowVisBackend(BaseVisBackend):
             Defaults to None.
         params (dict, optional): The params to be added to the experiment.
             Defaults to None.
-        tracking_uri (str, optional): The tracking uri. Defaults to None.
+        tracking_uri (str, optional): The tracking URI. With MLflow 3.7+
+            the local default is a SQLite database in `save_dir` and a
+            local experiment named `MMEngine`. Older clients use a file store.
         artifact_suffix (Tuple[str] or str, optional): The artifact suffix.
             Defaults to ('.json', '.log', '.py', 'yaml').
         tracked_config_keys (dict, optional): The top level keys of config that
@@ -695,6 +698,7 @@ class MLflowVisBackend(BaseVisBackend):
         self._artifact_suffix = artifact_suffix
         self._tracked_config_keys = tracked_config_keys
         self._artifact_location = artifact_location
+        self._local_artifact_dir = None
 
     def _init_env(self):
         """Setup env for MLflow."""
@@ -705,8 +709,8 @@ class MLflowVisBackend(BaseVisBackend):
             import mlflow
         except ImportError:
             raise ImportError(
-                'Please run "pip install mlflow" to install mlflow'
-            )  # type: ignore
+                'Install the MLflow tracking client with "pip install mlflow".'
+            )
         self._mlflow = mlflow
 
         # when mlflow is imported, a default logger is created.
@@ -718,16 +722,32 @@ class MLflowVisBackend(BaseVisBackend):
             if handler.stream is None or handler.stream.closed:
                 handler.stream = open(handler.baseFilename, 'a')
 
-        if self._tracking_uri is not None:
-            logger.warning(
-                'Please make sure that the mlflow server is running.')
-            self._mlflow.set_tracking_uri(self._tracking_uri)
-        else:
-            if os.name == 'nt':
-                file_url = f'file:\\{os.path.abspath(self._save_dir)}'
+        tracking_uri = self._tracking_uri
+        if tracking_uri is None:
+            save_dir = Path(self._save_dir).resolve()
+            legacy_store = (save_dir / '0' / 'meta.yaml').is_file()
+            allow_file_store = os.getenv('MLFLOW_ALLOW_FILE_STORE',
+                                         '').lower() == 'true'
+            if digit_version(mlflow.__version__) >= digit_version(
+                    '3.7.0') and not (legacy_store and allow_file_store):
+                try:
+                    import alembic  # noqa: F401
+                    import sqlalchemy  # noqa: F401
+                except ImportError as exc:
+                    raise ImportError(
+                        'Local SQLite tracking requires '
+                        '"pip install sqlalchemy alembic".') from exc
+                database = save_dir / 'mlflow.db'
+                tracking_uri = f'sqlite:///{database.as_posix()}'
+                # MLflow creates its reserved Default experiment with a
+                # working-directory artifact root. Keep our runs in save_dir.
+                self._exp_name = self._exp_name or 'MMEngine'
+                if self._artifact_location is None:
+                    self._local_artifact_dir = save_dir / 'artifacts'
+                    self._artifact_location = self._local_artifact_dir.as_uri()
             else:
-                file_url = f'file://{os.path.abspath(self._save_dir)}'
-            self._mlflow.set_tracking_uri(file_url)
+                tracking_uri = save_dir.as_uri()
+        self._mlflow.set_tracking_uri(tracking_uri)
 
         self._exp_name = self._exp_name or 'Default'
 
@@ -781,6 +801,8 @@ class MLflowVisBackend(BaseVisBackend):
                 should be RGB.
             step (int): Global step value to record. Default to 0.
         """
+        if not osp.splitext(name)[1]:
+            name = f'{name}_{step}.png'
         self._mlflow.log_image(image, name)
 
     @force_init_env
@@ -820,21 +842,20 @@ class MLflowVisBackend(BaseVisBackend):
 
     def close(self) -> None:
         """Close the mlflow."""
-        if not hasattr(self, '_mlflow'):
+        if not hasattr(self, '_mlflow') or self._mlflow.active_run() is None:
             return
 
-        file_paths = dict()
-        for filename in scandir(self.cfg.work_dir, self._artifact_suffix,
-                                True):
-            file_path = osp.join(self.cfg.work_dir, filename)
-            relative_path = os.path.relpath(file_path, self.cfg.work_dir)
-            dir_path = os.path.dirname(relative_path)
-            file_paths[file_path] = dir_path
-
-        for file_path, dir_path in file_paths.items():
-            self._mlflow.log_artifact(file_path, dir_path)
-
-        self._mlflow.end_run()
+        work_dir = getattr(self, 'cfg', {}).get('work_dir')
+        try:
+            if work_dir:
+                for filename in list(
+                        scandir(work_dir, self._artifact_suffix, True)):
+                    path = Path(work_dir) / filename
+                    if self._local_artifact_dir not in path.resolve().parents:
+                        self._mlflow.log_artifact(
+                            str(path), osp.dirname(filename))
+        finally:
+            self._mlflow.end_run()
 
     def _flatten(self, d, parent_key='', sep='.') -> dict:
         """Flatten the dict."""

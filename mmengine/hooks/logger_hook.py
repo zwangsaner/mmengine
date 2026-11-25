@@ -252,26 +252,15 @@ class LoggerHook(Hook):
         tag, log_str = runner.log_processor.get_log_after_epoch(
             runner, len(runner.val_dataloader), 'val')
         runner.logger.info(log_str)
-        if self.log_metric_by_epoch:
-            # Accessing the epoch attribute of the runner will trigger
-            # the construction of the train_loop. Therefore, to avoid
-            # triggering the construction of the train_loop during
-            # validation, check before accessing the epoch.
-            if (isinstance(runner._train_loop, dict)
-                    or runner._train_loop is None):
-                epoch = 0
-            else:
-                epoch = runner.epoch
-            runner.visualizer.add_scalars(
-                tag, step=epoch, file_path=self.json_log_path)
+        # Avoid building the training loop during standalone validation.
+        if isinstance(runner._train_loop, dict) or runner._train_loop is None:
+            epoch = step = 0
         else:
-            if (isinstance(runner._train_loop, dict)
-                    or runner._train_loop is None):
-                iter = 0
-            else:
-                iter = runner.iter
-            runner.visualizer.add_scalars(
-                tag, step=iter, file_path=self.json_log_path)
+            epoch = runner.epoch
+            step = epoch if self.log_metric_by_epoch else runner.iter
+        tag['epoch'] = epoch
+        runner.visualizer.add_scalars(
+            tag, step=step, file_path=self.json_log_path)
 
     def after_test_epoch(self,
                          runner,

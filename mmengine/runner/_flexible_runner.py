@@ -1461,8 +1461,7 @@ class FlexibleRunner:
             callback=callback,
         )
 
-        self.train_loop._epoch = checkpoint['meta']['epoch']
-        self.train_loop._iter = checkpoint['meta']['iter']
+        self.train_loop.load_progress(checkpoint['meta'])
 
         # check whether the number of GPU used for current experiment
         # is consistent with resuming from checkpoint
@@ -1572,14 +1571,12 @@ class FlexibleRunner:
             raise TypeError(
                 f'meta should be a dict or None, but got {type(meta)}')
 
-        if by_epoch:
-            # self.epoch increments 1 after
-            # `self.call_hook('after_train_epoch)` but `save_checkpoint` is
-            # called by `after_train_epoch`` method of `CheckpointHook` so
-            # `epoch` should be `self.epoch + 1`
-            meta.update(epoch=self.epoch + 1, iter=self.iter)
-        else:
-            meta.update(epoch=self.epoch, iter=self.iter + 1)
+        if 'epoch' not in meta:
+            meta['epoch'] = self.epoch + int(by_epoch)
+        if 'iter' not in meta:
+            meta['iter'] = self.iter + int(not by_epoch)
+        if isinstance(self._train_loop, EpochBasedTrainLoop):
+            meta.setdefault('iter_in_epoch', self._train_loop.iter_in_epoch)
 
         if file_client_args is not None:
             warnings.warn(
@@ -1599,7 +1596,8 @@ class FlexibleRunner:
         meta.update(
             cfg=self.cfg.pretty_text, experiment_name=self.experiment_name)
 
-        if hasattr(self.train_dataloader.dataset, 'metainfo'):
+        if isinstance(self._train_loop, BaseLoop) and hasattr(
+                self.train_dataloader.dataset, 'metainfo'):
             meta.update(dataset_meta=self.train_dataloader.dataset.metainfo)
 
         checkpoint = {

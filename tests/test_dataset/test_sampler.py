@@ -139,3 +139,12 @@ class TestInfiniteSampler(TestCase):
     def test_set_epoch(self):
         sampler = InfiniteSampler(self.dataset)
         sampler.set_epoch(10)
+
+    def test_partial_dataloader_iteration(self):
+        dataset = range(5)
+        sampler = InfiniteSampler(dataset, shuffle=False, seed=0)
+        loader = torch.utils.data.DataLoader(
+            dataset, sampler=sampler, batch_size=2)
+        self.assertEqual(next(iter(loader)).tolist(), [0, 1])
+        self.assertEqual(next(iter(loader)).tolist(), [2, 3])
+        self.assertEqual(next(iter(loader)).tolist(), [4, 0])

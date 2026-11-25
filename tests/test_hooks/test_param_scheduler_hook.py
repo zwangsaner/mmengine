@@ -2,8 +2,11 @@
 import copy
 from unittest.mock import Mock
 
+import torch
+
 from mmengine.hooks import ParamSchedulerHook
-from mmengine.optim import _ParamScheduler
+from mmengine.optim import (AmpOptimWrapper, OptimWrapper, StepLR,
+                            _ParamScheduler)
 from mmengine.testing import RunnerTestCase
 
 
@@ -45,6 +48,52 @@ class TestParamSchedulerHook(RunnerTestCase):
         hook.after_train_iter(runner, 0)
         scheduler1.step.assert_called()
         scheduler2.step.assert_called()
+
+    def test_gradient_accumulation_with_multiple_schedulers(self):
+        model = torch.nn.Linear(1, 1)
+        optim = OptimWrapper(
+            torch.optim.SGD(model.parameters(), lr=1), accumulative_counts=2)
+        optim.initialize_count_status(model, 0, 5)
+        other = torch.optim.SGD(model.parameters(), lr=1)
+        first = StepLR(optim, step_size=1, by_epoch=False)
+        second = StepLR.build_iter_from_epoch(
+            optim, step_size=1, epoch_length=5)
+        idle = StepLR(other, step_size=1, by_epoch=False)
+        runner = Mock(
+            param_schedulers=dict(active=[first, second], idle=[idle]))
+        hook = ParamSchedulerHook()
+        for batch, expected in enumerate([0, 1, 1, 2, 3]):
+            optim.update_params(model(torch.ones(1, 1)).sum())
+            hook.after_train_iter(runner, batch)
+            self.assertEqual(
+                (first.last_step, second.last_step, idle.last_step),
+                (expected, expected, 0))
+        self.assertEqual(second.step_size, 3)
+
+    def test_replaced_optimizer_step(self):
+        optim = torch.optim.SGD(torch.nn.Linear(1, 1).parameters(), lr=1)
+        scheduler = StepLR(optim, step_size=1, by_epoch=False)
+        optim.step = lambda: None
+        with self.assertWarnsRegex(UserWarning, 'overridden'):
+            ParamSchedulerHook().after_train_iter(
+                Mock(param_schedulers=[scheduler]), 0)
+        self.assertEqual(scheduler.last_step, 1)
+
+    def test_amp_skipped_update(self):
+        if not torch.cuda.is_available():
+            self.skipTest('CUDA GradScaler requires a GPU')
+        model = torch.nn.Linear(1, 1).cuda()
+        optim = AmpOptimWrapper(
+            optimizer=torch.optim.SGD(model.parameters(), lr=1),
+            dtype='float16')
+        scheduler = StepLR(optim, step_size=1, by_epoch=False)
+        runner = Mock(param_schedulers=[scheduler])
+        hook = ParamSchedulerHook()
+        for batch, factor in enumerate([float('inf'), 1.0]):
+            optim.update_params(
+                model(torch.ones(1, 1, device='cuda')).sum() * factor)
+            hook.after_train_iter(runner, batch)
+            self.assertEqual(scheduler.last_step, batch)
 
     def test_after_train_epoch(self):
         # runner.param_schedulers should be a list or dict

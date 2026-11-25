@@ -240,6 +240,7 @@ def convert_sync_batchnorm(module: nn.Module,
         module_output = SyncBatchNorm(module.num_features, module.eps,
                                       module.momentum, module.affine,
                                       module.track_running_stats)
+        module_output.training = module.training
 
         if module.affine:
             with torch.no_grad():

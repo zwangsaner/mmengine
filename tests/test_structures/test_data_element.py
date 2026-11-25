@@ -142,9 +142,6 @@ class TestBaseDataElement(TestCase):
         # test new() with no arguments
         new_instances = instances.new()
         assert type(new_instances) is type(instances)
-        # After deepcopy, the address of new data'element will be same as
-        # origin, but when change new data' element will not effect the origin
-        # element and will have new address
         _, data = self.setup_data()
         new_instances.set_data(data)
         assert not self.is_equal(new_instances.gt_instances,
@@ -169,6 +166,22 @@ class TestBaseDataElement(TestCase):
         instances = BaseDataElement(metainfo=metainfo, **data)
         new_instances = instances.clone()
         assert type(new_instances) is type(instances)
+
+    def test_clone_nested_tensor_storage_and_gradients(self):
+        source = torch.tensor([2.0], requires_grad=True)
+        child = BaseDataElement(scores=source * 3)
+        original = BaseDataElement(
+            child=child, nested=[{
+                'same': child
+            }], array=np.array([4]))
+        for duplicate in (original.clone(), original.new()):
+            self.assertIs(duplicate.child, duplicate.nested[0]['same'])
+            duplicate.child.scores.add_(1)
+            duplicate.array[0] = 5
+            self.assertEqual(original.child.scores.item(), 6)
+            self.assertEqual(original.array[0], 4)
+        duplicate.child.scores.sum().backward()
+        self.assertEqual(source.grad.item(), 3)
 
     def test_set_metainfo(self):
         metainfo, _ = self.setup_data()

@@ -448,6 +448,7 @@ def _gather_abs_import_lazyobj(tree: ast.Module,
             for alias in node.names:
                 # Skip converting built-in module to LazyObject
                 if _is_builtin_module(alias.name):
+                    abs_imported.add(alias.asname or alias.name.split('.')[0])
                     new_body.append(node)
                     continue
                 module = alias.name.split('.')[0]

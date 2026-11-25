@@ -322,6 +322,33 @@ class TestMLflowVisBackend:
         mlflow_vis_backend.close()
         shutil.rmtree('temp_dir')
 
+    def test_local_run_without_config(self, tmp_path, monkeypatch):
+        import mlflow
+        from PIL import Image
+
+        monkeypatch.setenv('MLFLOW_ALLOW_FILE_STORE', 'false')
+        backend = MLflowVisBackend(str(tmp_path))
+        image = np.zeros((3, 5, 3), dtype=np.uint8)
+        try:
+            backend.add_image('val_img', image, step=7)
+            backend.add_image('explicit.png', image, step=8)
+            run_id = mlflow.active_run().info.run_id
+            client = mlflow.tracking.MlflowClient()
+            artifact_names = {a.path for a in client.list_artifacts(run_id)}
+            assert artifact_names == {'val_img_7.png', 'explicit.png'}
+            with Image.open(
+                    client.download_artifacts(run_id,
+                                              'val_img_7.png')) as saved:
+                assert saved.size == (5, 3)
+                assert saved.format == 'PNG'
+            if digit_version(mlflow.__version__) >= digit_version('3.7.0'):
+                assert (tmp_path / 'mlflow.db').is_file()
+                assert list((tmp_path / 'artifacts').rglob('val_img_7.png'))
+            backend.close()
+            assert mlflow.active_run() is None
+        finally:
+            mlflow.end_run()
+
 
 @patch.dict(sys.modules, {'clearml': MagicMock()})
 class TestClearMLVisBackend:

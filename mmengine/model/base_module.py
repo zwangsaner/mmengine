@@ -10,7 +10,8 @@ import torch.nn as nn
 
 from mmengine.dist import master_only
 from mmengine.logging import MMLogger, print_log
-from .weight_init import PretrainedInit, initialize, update_init_info
+from .weight_init import (PretrainedInit, _is_lazy_parameter, initialize,
+                          update_init_info)
 from .wrappers.utils import is_model_wrapper
 
 
@@ -86,12 +87,12 @@ class BaseModule(nn.Module, metaclass=ABCMeta):
             # the corresponding parameter is changed, update related
             # initialization information
             for name, param in self.named_parameters():
-                self._params_init_info[param][
-                    'init_info'] = f'The value is the same before and ' \
-                                   f'after calling `init_weights` ' \
-                                   f'of {self.__class__.__name__} '
-                self._params_init_info[param][
-                    'tmp_mean_value'] = param.data.mean().cpu()
+                self._params_init_info[param]['init_info'] = (
+                    'The value is the same before and after calling '
+                    f'`init_weights` of {self.__class__.__name__} ')
+                self._params_init_info[param]['tmp_mean_value'] = (
+                    None
+                    if _is_lazy_parameter(param) else param.data.mean().cpu())
 
             # pass `params_init_info` to all submodules
             # All submodules share the same `params_init_info`,
@@ -162,23 +163,24 @@ class BaseModule(nn.Module, metaclass=ABCMeta):
         `initialization.log.json` in workdir."""
 
         logger = MMLogger.get_current_instance()
-        with_file_handler = False
-        # dump the information to the logger file if there is a `FileHandler`
-        for handler in logger.handlers:
-            if isinstance(handler, FileHandler):
-                handler.stream.write(
-                    'Name of parameter - Initialization information\n')
-                for name, param in self.named_parameters():
-                    handler.stream.write(
-                        f'\n{name} - {param.shape}: '
-                        f"\n{self._params_init_info[param]['init_info']} \n")
-                handler.stream.flush()
-                with_file_handler = True
-        if not with_file_handler:
-            for name, param in self.named_parameters():
-                logger.info(
-                    f'\n{name} - {param.shape}: '
-                    f"\n{self._params_init_info[param]['init_info']} \n ")
+        streams = [
+            handler.stream for handler in logger.handlers
+            if isinstance(handler, FileHandler)
+        ]
+        for stream in streams:
+            stream.write('Name of parameter - Initialization information\n')
+        for name, param in self.named_parameters():
+            shape = 'uninitialized' if _is_lazy_parameter(
+                param) else param.shape
+            message = (f'\n{name} - {shape}: \n'
+                       f"{self._params_init_info[param]['init_info']} \n")
+            if streams:
+                for stream in streams:
+                    stream.write(message)
+            else:
+                logger.info(message)
+        for stream in streams:
+            stream.flush()
 
     def __repr__(self):
         s = super().__repr__()

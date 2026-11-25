@@ -439,6 +439,38 @@ class TestConfig:
         with open(substituted_cfg) as f:
             assert f.read() == 'c=80\n'
 
+    @pytest.mark.parametrize(
+        ('suffix', 'source'),
+        [
+            (
+                '.py',
+                "path = '{{$WIN_ROOT:default}}/images'\n"
+                'raw = r"{{$WIN_ROOT:default}}"\n'
+                'bare = {{"$WIN_ROOT:None"}}\n'
+                'formatted = f"{{$WIN_ROOT:default}}/{1}"',
+            ),
+            ('.json', '{"path": "{{$WIN_ROOT:default}}/images", '
+             '"bare": {{"$WIN_ROOT:None"}}}'),
+            ('.yaml', 'path: "{{$WIN_ROOT:default}}/images"\n'
+             "single: '{{$WIN_ROOT:default}}' "),
+        ],
+    )
+    def test_windows_env_path(self, tmp_path, monkeypatch, suffix, source):
+        root = r"C:\Users\new\test's {data}" + '\\'
+        monkeypatch.setenv('WIN_ROOT', root)
+        path = tmp_path / ('config' + suffix)
+        path.write_text(source, encoding='utf-8')
+        cfg = Config.fromfile(path)
+        assert cfg.path == root + '/images'
+        assert cfg.env_variables['WIN_ROOT'] == root
+        if suffix == '.py':
+            assert cfg.raw == root
+            assert cfg.formatted == root + '/1'
+        if suffix in ('.py', '.json'):
+            assert cfg.bare == root
+        if suffix == '.yaml':
+            assert cfg.single == root
+
     def test_pre_substitute_base_vars(self, tmp_path):
         cfg_path = osp.join(self.data_path, 'config',
                             'py_config/test_pre_substitute_base_vars.py')
@@ -895,6 +927,22 @@ class TestConfig:
         assert new_cfg._cfg_dict is not cfg._cfg_dict
         assert new_cfg._filename == cfg._filename
         assert new_cfg._text == cfg._text
+
+    def test_deepcopy_with_module_imports(self, tmp_path):
+        path = tmp_path / 'pure.py'
+        path.write_text(
+            'from torch.optim import SGD\nimport json as codec\n'
+            'import time\noptimizer = dict(type=SGD, lr=1.0)\n',
+            encoding='utf-8',
+        )
+        cfg = Config.fromfile(path)
+        cloned = copy.deepcopy(cfg)
+        assert cloned.codec is cfg.codec
+        assert cloned.time is cfg.time
+        assert cloned.optimizer.type is cfg.optimizer.type
+        assert set(cloned.to_dict()) == {'optimizer'}
+        cloned.optimizer.lr = 0.01
+        assert cfg.optimizer.lr == 1.0
 
     def test_copy(self):
         cfg_file = osp.join(self.data_path, 'config',

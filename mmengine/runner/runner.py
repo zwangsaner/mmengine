@@ -2019,8 +2019,7 @@ class Runner:
             checkpoint = self.load_checkpoint(
                 filename, map_location=map_location)
 
-        self.train_loop._epoch = checkpoint['meta']['epoch']
-        self.train_loop._iter = checkpoint['meta']['iter']
+        self.train_loop.load_progress(checkpoint['meta'])
 
         # check whether the number of GPU used for current experiment
         # is consistent with resuming from checkpoint
@@ -2185,16 +2184,12 @@ class Runner:
             raise TypeError(
                 f'meta should be a dict or None, but got {type(meta)}')
 
-        if by_epoch:
-            # self.epoch increments 1 after
-            # `self.call_hook('after_train_epoch)` but `save_checkpoint` is
-            # called by `after_train_epoch`` method of `CheckpointHook` so
-            # `epoch` should be `self.epoch + 1`
-            meta.setdefault('epoch', self.epoch + 1)
-            meta.setdefault('iter', self.iter)
-        else:
-            meta.setdefault('epoch', self.epoch)
-            meta.setdefault('iter', self.iter + 1)
+        if 'epoch' not in meta:
+            meta['epoch'] = self.epoch + int(by_epoch)
+        if 'iter' not in meta:
+            meta['iter'] = self.iter + int(not by_epoch)
+        if isinstance(self._train_loop, EpochBasedTrainLoop):
+            meta.setdefault('iter_in_epoch', self._train_loop.iter_in_epoch)
 
         if file_client_args is not None:
             warnings.warn(
@@ -2218,7 +2213,8 @@ class Runner:
             time=time.strftime('%Y%m%d_%H%M%S', time.localtime()),
             mmengine_version=mmengine.__version__ + get_git_hash())
 
-        if hasattr(self.train_dataloader.dataset, 'metainfo'):
+        if isinstance(self._train_loop, BaseLoop) and hasattr(
+                self.train_dataloader.dataset, 'metainfo'):
             meta.update(dataset_meta=self.train_dataloader.dataset.metainfo)
 
         if is_model_wrapper(self.model):

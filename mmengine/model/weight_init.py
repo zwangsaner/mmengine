@@ -12,6 +12,12 @@ from mmengine.logging import print_log
 from mmengine.registry import WEIGHT_INITIALIZERS, build_from_cfg
 
 
+def _is_lazy_parameter(param: Tensor) -> bool:
+    # UninitializedParameter is absent in older supported PyTorch versions.
+    return isinstance(param, getattr(nn.parameter, 'UninitializedParameter',
+                                     ()))
+
+
 def update_init_info(module, init_info):
     """Update the `_params_init_info` in the module if the value of parameters
     are changed.
@@ -38,6 +44,8 @@ def update_init_info(module, init_info):
 
         # The parameter has been changed during executing the
         # `init_weights` of module
+        if _is_lazy_parameter(param):
+            continue
         mean_value = param.data.mean().cpu()
         if module._params_init_info[param]['tmp_mean_value'] != mean_value:
             module._params_init_info[param]['init_info'] = init_info

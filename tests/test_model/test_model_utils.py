@@ -55,8 +55,11 @@ def test_convert_syncbn():
             convert_sync_batchnorm(conv, implementation='mmcv')
 
     # Test convert BN to Pytorch SyncBatchNorm
+    conv[1].eval()
     converted_conv = convert_sync_batchnorm(conv)
     assert isinstance(converted_conv[1], torch.nn.SyncBatchNorm)
+    assert converted_conv.training
+    assert not converted_conv[1].training
 
 
 def test_is_model_wrapper():

@@ -32,6 +32,11 @@ class BaseLoop(metaclass=ABCMeta):
     def runner(self):
         return self._runner
 
+    def load_progress(self, meta: dict) -> None:
+        """Restore a training loop's completed epoch and iteration counts."""
+        self._epoch = meta['epoch']
+        self._iter = meta['iter']
+
     @abstractmethod
     def run(self) -> Any:
         """Execute loop."""

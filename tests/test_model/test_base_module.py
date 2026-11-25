@@ -262,6 +262,17 @@ class TestBaseModule(TestCase):
         model.component4.init_weights.assert_called_once()
         model.reg.init_weights.assert_not_called()
 
+    def test_lazy_layer_before_first_forward(self):
+        if not hasattr(nn, 'LazyLinear'):
+            self.skipTest(
+                'LazyLinear is unavailable on this version of PyTorch')
+        model = Sequential(nn.LazyLinear(3))
+        model.init_weights()
+        self.assertTrue(model[0].has_uninitialized_params())
+        result = model(torch.ones(2, 4))
+        self.assertEqual(result.shape, (2, 3))
+        self.assertEqual(model[0].weight.shape, (3, 4))
+
     def test_dump_init_info(self):
         import os
         import shutil

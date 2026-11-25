@@ -289,7 +289,30 @@ class BaseDataElement:
         if kwargs:
             new_data.set_data(kwargs)
         else:
-            new_data.set_data(dict(self.items()))
+            fields = dict(self.items())
+            # Tensor.__deepcopy__ only supports leaves. Use Tensor.clone()
+            # for data tensors so predictions keep their autograd history.
+            memo = {id(self): new_data}
+            seen = set()
+
+            def collect_tensors(value):
+                key = id(value)
+                if key in seen or key in memo:
+                    return
+                seen.add(key)
+                if isinstance(value, torch.Tensor):
+                    memo[key] = value.clone()
+                elif isinstance(value, BaseDataElement):
+                    collect_tensors(vars(value))
+                elif isinstance(value, dict):
+                    for item in value.values():
+                        collect_tensors(item)
+                elif isinstance(value, (list, tuple, set, frozenset)):
+                    for item in value:
+                        collect_tensors(item)
+
+            collect_tensors(fields)
+            new_data.set_data(copy.deepcopy(fields, memo))
         return new_data
 
     def clone(self):
@@ -298,10 +321,11 @@ class BaseDataElement:
         Returns:
             BaseDataElement: The copy of current data element.
         """
-        clone_data = self.__class__()
-        clone_data.set_metainfo(dict(self.metainfo_items()))
-        clone_data.set_data(dict(self.items()))
-        return clone_data
+        return self.new()
+
+    def _shallow_copy(self):
+        """Copy the container before applying a tensor conversion."""
+        return self.new(**dict(self.items()))
 
     def keys(self) -> list:
         """
@@ -480,7 +504,7 @@ class BaseDataElement:
     # Tensor-like methods
     def to(self, *args, **kwargs) -> 'BaseDataElement':
         """Apply same name function to all tensors in data_fields."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if hasattr(v, 'to'):
                 v = v.to(*args, **kwargs)
@@ -491,7 +515,7 @@ class BaseDataElement:
     # Tensor-like methods
     def cpu(self) -> 'BaseDataElement':
         """Convert all tensors to CPU in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if isinstance(v, (torch.Tensor, BaseDataElement)):
                 v = v.cpu()
@@ -502,7 +526,7 @@ class BaseDataElement:
     # Tensor-like methods
     def cuda(self) -> 'BaseDataElement':
         """Convert all tensors to GPU in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if isinstance(v, (torch.Tensor, BaseDataElement)):
                 v = v.cuda()
@@ -513,7 +537,7 @@ class BaseDataElement:
     # Tensor-like methods
     def musa(self) -> 'BaseDataElement':
         """Convert all tensors to musa in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if isinstance(v, (torch.Tensor, BaseDataElement)):
                 v = v.musa()
@@ -524,7 +548,7 @@ class BaseDataElement:
     # Tensor-like methods
     def npu(self) -> 'BaseDataElement':
         """Convert all tensors to NPU in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if isinstance(v, (torch.Tensor, BaseDataElement)):
                 v = v.npu()
@@ -534,7 +558,7 @@ class BaseDataElement:
 
     def mlu(self) -> 'BaseDataElement':
         """Convert all tensors to MLU in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if isinstance(v, (torch.Tensor, BaseDataElement)):
                 v = v.mlu()
@@ -545,7 +569,7 @@ class BaseDataElement:
     # Tensor-like methods
     def detach(self) -> 'BaseDataElement':
         """Detach all tensors in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if isinstance(v, (torch.Tensor, BaseDataElement)):
                 v = v.detach()
@@ -556,7 +580,7 @@ class BaseDataElement:
     # Tensor-like methods
     def numpy(self) -> 'BaseDataElement':
         """Convert all tensors to np.ndarray in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             if isinstance(v, (torch.Tensor, BaseDataElement)):
                 v = v.detach().cpu().numpy()
@@ -566,7 +590,7 @@ class BaseDataElement:
 
     def to_tensor(self) -> 'BaseDataElement':
         """Convert all np.ndarray to tensor in data."""
-        new_data = self.new()
+        new_data = self._shallow_copy()
         for k, v in self.items():
             data = {}
             if isinstance(v, np.ndarray):

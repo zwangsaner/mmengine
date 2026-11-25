@@ -154,7 +154,9 @@ class InfiniteSampler(Sampler):
 
     def __iter__(self) -> Iterator[int]:
         """Iterate the indices."""
-        yield from self.indices
+        # Dropping a DataLoader iterator must leave the shared stream open.
+        for index in self.indices:
+            yield index
 
     def __len__(self) -> int:
         """Length of base dataset."""

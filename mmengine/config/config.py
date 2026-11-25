@@ -2,19 +2,22 @@
 import ast
 import copy
 import difflib
+import io
+import json
 import os
 import os.path as osp
 import platform
 import shutil
 import sys
 import tempfile
+import tokenize
 import types
 import uuid
 import warnings
 from argparse import Action, ArgumentParser, Namespace
 from collections import OrderedDict, abc
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Optional, Sequence, Tuple, Union
 
 from addict import Dict
@@ -138,6 +141,11 @@ class ConfigDict(Dict):
     def __deepcopy__(self, memo):
         other = self.__class__()
         memo[id(self)] = other
+        # Imported modules are process-wide singletons. They may also be
+        # referenced by another field, before their own key in this dict.
+        for value in super().values():
+            if isinstance(value, types.ModuleType):
+                memo[id(value)] = value
         for key, value in super().items():
             other[copy.deepcopy(key, memo)] = copy.deepcopy(value, memo)
         return other
@@ -724,25 +732,107 @@ class Config:
         """
         with open(filename, encoding='utf-8') as f:
             config_file = f.read()
-        regexp = r'\{\{[\'\"]?\s*\$(\w+)\s*\:\s*(\S*?)\s*[\'\"]?\}\}'
-        keys = re.findall(regexp, config_file)
+        regexp = re.compile(
+            r"""\{\{['"]?\s*\$(\w+)\s*:\s*(\S*?)\s*['"]?\}\}""")
         env_variables = dict()
-        for var_name, value in keys:
-            regexp = r'\{\{[\'\"]?\s*\$' + var_name + r'\s*\:\s*' \
-                + value + r'\s*[\'\"]?\}\}'
+        suffix = Path(filename).suffix
+
+        def substitute(match, quote=None, formatted=False):
+            var_name, value = match.groups()
             if var_name in os.environ:
                 value = os.environ[var_name]
-                env_variables[var_name] = value
-                print_log(
-                    f'Using env variable `{var_name}` with value of '
-                    f'{value} to replace item in config.',
-                    logger='current')
+                if var_name not in env_variables:
+                    env_variables[var_name] = value
+                    print_log(
+                        f'Using env variable `{var_name}` with value of '
+                        f'{value} to replace item in config.',
+                        logger='current',
+                    )
+                if quote == "'" and suffix in ('.yaml', '.yml'):
+                    value = value.replace("'", "''")
+                elif quote:
+                    value = json.dumps(value, ensure_ascii=False)[1:-1]
+                    if quote == "'":
+                        value = value.replace("'", "\\'")
+                    if formatted:
+                        value = value.replace('{', '{{').replace('}', '}}')
+                elif suffix in ('.py',
+                                '.json') and PureWindowsPath(value).drive:
+                    # A drive letter or UNC path is a value even when the
+                    # placeholder occupies the entire unquoted expression.
+                    value = json.dumps(value, ensure_ascii=False)
             if not value:
                 raise KeyError(f'`{var_name}` cannot be found in `os.environ`.'
                                f' Please set `{var_name}` in environment or '
                                'give a default value.')
-            config_file = re.sub(regexp, value, config_file)
+            return value
 
+        if regexp.search(config_file):
+            # Mask the expressions before lexing so a quoted placeholder can
+            # also occupy an entire numeric or other unquoted value.
+            masked = regexp.sub(lambda m: re.sub(r'[^\r\n]', 'x', m[0]),
+                                config_file)
+            pieces = []
+            previous = 0
+
+            def replace_literal(start, end, quote, raw=False, formatted=False):
+                nonlocal previous
+                literal = config_file[start:end]
+                if regexp.search(literal):
+                    if raw:
+                        # Re-quote a raw literal before interpolation. Even
+                        # an inserted path ending in a backslash stays valid.
+                        literal = repr(ast.literal_eval(literal))
+                        quote = literal.lstrip('b')[0]
+                    pieces.append(
+                        regexp.sub(substitute, config_file[previous:start]))
+                    pieces.append(
+                        regexp.sub(
+                            lambda match: substitute(match, quote, formatted),
+                            literal))
+                    previous = end
+
+            if suffix == '.py':
+                offsets = [0]
+                for line in masked.splitlines(keepends=True):
+                    offsets.append(offsets[-1] + len(line))
+                fstring_quotes = []
+                for token in tokenize.generate_tokens(
+                        io.StringIO(masked).readline):
+                    start = offsets[token.start[0] - 1] + token.start[1]
+                    if token.type == tokenize.STRING:
+                        literal = token.string.lstrip('rRuUbBfF')
+                        prefix = token.string[:len(token.string) -
+                                              len(literal)].lower()
+                        replace_literal(
+                            start,
+                            start + len(token.string),
+                            literal[0],
+                            raw='r' in prefix and 'f' not in prefix,
+                            formatted='f' in prefix,
+                        )
+                    # Python 3.12+ tokenizes f-string text separately.
+                    elif token.type == getattr(tokenize, 'FSTRING_START',
+                                               None):
+                        fstring_quotes.append(token.string[-1])
+                    elif token.type == getattr(tokenize, 'FSTRING_MIDDLE',
+                                               None):
+                        end = offsets[token.end[0] - 1] + token.end[1]
+                        replace_literal(
+                            start, end, fstring_quotes[-1], formatted=True)
+                    elif token.type == getattr(tokenize, 'FSTRING_END', None):
+                        fstring_quotes.pop()
+            elif suffix in ('.json', '.yaml', '.yml'):
+                import yaml
+
+                for token in yaml.scan(masked):
+                    if isinstance(
+                            token,
+                            yaml.ScalarToken) and token.style in ("'", '"'):
+                        replace_literal(token.start_mark.index,
+                                        token.end_mark.index, token.style)
+            pieces.append(regexp.sub(substitute, config_file[previous:]))
+            config_file = ''.join(pieces)
         with open(temp_config_name, 'w', encoding='utf-8') as tmp_config_file:
             tmp_config_file.write(config_file)
         return env_variables

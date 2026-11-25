@@ -26,7 +26,8 @@ class EpochBasedTrainLoop(BaseLoop):
         dataloader (Dataloader or dict): A dataloader object or a dict to
             build a dataloader.
         max_epochs (int): Total training epochs.
-        val_begin (int): The epoch that begins validating.
+        val_begin (int): The epoch that begins validating. Set to 0 to
+            also validate before the first training epoch.
             Defaults to 1.
         val_interval (int): Validation interval. Defaults to 1.
         dynamic_intervals (List[Tuple[int, int]], optional): The
@@ -50,6 +51,7 @@ class EpochBasedTrainLoop(BaseLoop):
         self._max_iters = self._max_epochs * len(self.dataloader)
         self._epoch = 0
         self._iter = 0
+        self._iter_in_epoch = 0
         self.val_begin = val_begin
         self.val_interval = val_interval
         # This attribute will be updated by `EarlyStoppingHook`
@@ -90,9 +92,28 @@ class EpochBasedTrainLoop(BaseLoop):
         """int: Current iteration."""
         return self._iter
 
+    @property
+    def iter_in_epoch(self) -> int:
+        """Number of batches already trained in the current epoch."""
+        return self._iter_in_epoch
+
+    def load_progress(self, meta: dict) -> None:
+        super().load_progress(meta)
+        if 'iter_in_epoch' in meta:
+            self._iter_in_epoch = meta['iter_in_epoch']
+        else:
+            # Older checkpoints only stored the epoch and global iteration.
+            length = len(self.dataloader)
+            offset = self._iter - self._epoch * length
+            self._iter_in_epoch = offset if 0 <= offset <= length else 0
+
     def run(self) -> torch.nn.Module:
         """Launch training."""
         self.runner.call_hook('before_train')
+
+        if (self.val_begin == 0 and self._epoch == 0 and self._iter == 0
+                and self.runner.val_loop is not None):
+            self.runner.val_loop.run()
 
         while self._epoch < self._max_epochs and not self.stop_training:
             self.run_epoch()
@@ -111,9 +132,12 @@ class EpochBasedTrainLoop(BaseLoop):
         """Iterate one epoch."""
         self.runner.call_hook('before_train_epoch')
         self.runner.model.train()
+        completed = self._iter_in_epoch
         for idx, data_batch in enumerate(self.dataloader):
-            self.run_iter(idx, data_batch)
+            if idx >= completed:
+                self.run_iter(idx, data_batch)
 
+        self._iter_in_epoch = 0
         self.runner.call_hook('after_train_epoch')
         self._epoch += 1
 
@@ -131,6 +155,7 @@ class EpochBasedTrainLoop(BaseLoop):
         outputs = self.runner.model.train_step(
             data_batch, optim_wrapper=self.runner.optim_wrapper)
 
+        self._iter_in_epoch = idx + 1
         self.runner.call_hook(
             'after_train_iter',
             batch_idx=idx,

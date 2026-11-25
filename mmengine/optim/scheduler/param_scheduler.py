@@ -14,12 +14,29 @@ from typing import Callable, List, Optional, Sequence, Union
 from torch.optim import Optimizer
 
 from mmengine.logging import print_log
-from mmengine.optim import BaseOptimWrapper
+from mmengine.optim import AmpOptimWrapper, BaseOptimWrapper
 from mmengine.registry import PARAM_SCHEDULERS
 
 INF = int(1e9)
 
 OptimizerType = Union[BaseOptimWrapper, Optimizer]
+
+
+def _epoch_to_updates(optimizer, epoch_length, by_epoch):
+    """Convert an epoch boundary to the first update at or after it."""
+    assert by_epoch, ('Only epoch-based kwargs whose `by_epoch=True` can '
+                      'be converted to iter-based.')
+    assert epoch_length is not None and epoch_length > 0, (
+        f'`epoch_length` must be a positive integer, but got {epoch_length}.')
+    accumulation = getattr(optimizer, 'accumulative_counts', 1)
+
+    def to_updates(epochs):
+        batches = epochs * epoch_length
+        if accumulation == 1:
+            return batches
+        return math.ceil(batches / accumulation)
+
+    return to_updates
 
 
 class _ParamScheduler:
@@ -42,8 +59,9 @@ class _ParamScheduler:
         last_step (int): The index of last step. Used for resuming without
             state dict. Default value ``-1`` means the ``step`` function is
             never be called before. Defaults to -1.
-        by_epoch (bool): Whether the scheduled parameters are updated by
-            epochs. Defaults to True.
+        by_epoch (bool): Whether to update the parameters by epoch. If False,
+            the training hook advances on optimizer updates, including the
+            final partial gradient accumulation. Defaults to True.
         verbose (bool): Whether to print the value for each update.
             Defaults to False.
     """  # noqa: E501
@@ -95,10 +113,6 @@ class _ParamScheduler:
         # We would like to ensure that `scheduler.step()` is called after
         # `optimizer.step()`
         def with_counter(method: Callable):
-            if getattr(method, '_with_counter', False):
-                # `optimizer.step()` has already been replaced, return.
-                return method
-
             # Keep a weak reference to the optimizer instance to prevent
             # cyclic references.
             instance_ref = weakref.ref(method.__self__)  # type: ignore
@@ -110,9 +124,10 @@ class _ParamScheduler:
             @wraps(func)
             def wrapper(*args, **kwargs):
                 instance = instance_ref()
-                instance._global_step += 1
                 wrapped = func.__get__(instance, cls)
-                return wrapped(*args, **kwargs)
+                result = wrapped(*args, **kwargs)
+                instance._global_step += 1
+                return result
 
             # Note that the returned function here is no longer a bound method,
             # so attributes like `__func__` and `__self__` no longer exist.
@@ -120,9 +135,12 @@ class _ParamScheduler:
             return wrapper
 
         # add counter to optimizer
-        self.optimizer.step = with_counter(self.optimizer.step)  # type: ignore
-        self.optimizer._global_step = -1  # type: ignore
+        step_optimizer = self._step_optimizer
+        if not getattr(step_optimizer.step, '_with_counter', False):
+            step_optimizer.step = with_counter(step_optimizer.step)
+            step_optimizer._global_step = -1
 
+        self._last_optimizer_step = step_optimizer._global_step
         self._global_step = -1
         self.verbose = verbose
 
@@ -137,9 +155,12 @@ class _ParamScheduler:
         Returns:
             dict: scheduler state.
         """
+        # The optimizer counter belongs to the current process. On resume the
+        # scheduler keeps its saved position and observes the new optimizer.
         return {
             key: value
-            for key, value in self.__dict__.items() if key != 'optimizer'
+            for key, value in self.__dict__.items()
+            if key not in ('optimizer', '_last_optimizer_step')
         }
 
     def load_state_dict(self, state_dict: dict):
@@ -150,6 +171,8 @@ class _ParamScheduler:
                 from a call to :meth:`state_dict`.
         """
         self.__dict__.update(state_dict)
+        if hasattr(self, '_last_optimizer_step'):
+            self._last_optimizer_step = self._step_optimizer._global_step
 
     def get_last_value(self):
         """Return the last computed value by current scheduler.
@@ -177,13 +200,33 @@ class _ParamScheduler:
                 f'Adjusting parameter value of group {group} to {value:.4e}.',
                 logger='current')
 
+    @property
+    def _step_optimizer(self):
+        # GradScaler can skip the inner step when a gradient overflows.
+        return self.optimizer.optimizer if isinstance(
+            self.optimizer, AmpOptimWrapper) else self.optimizer
+
+    def step_after_optimizer(self):
+        """Advance once for each optimizer update since the last step."""
+        if not hasattr(self, '_last_optimizer_step') or not getattr(
+                self._step_optimizer.step, '_with_counter', False):
+            # A custom scheduler or a replaced optimizer step can opt out of
+            # the counter. Keep its previous per-iteration behavior.
+            self.step()
+            return
+        current = self._step_optimizer._global_step
+        for _ in range(current - self._last_optimizer_step):
+            self.step()
+        self._last_optimizer_step = current
+
     def step(self):
         """Adjusts the parameter value of each parameter group based on the
         specified schedule."""
         # Raise a warning if old pattern is detected
         # https://github.com/pytorch/pytorch/issues/20124
+        step_optimizer = self._step_optimizer
         if self._global_step == 0:
-            if not hasattr(self.optimizer.step, '_with_counter'):
+            if not hasattr(step_optimizer.step, '_with_counter'):
                 warnings.warn(
                     'Seems like `optimizer.step()` has been overridden after '
                     'parameter value scheduler initialization. Please, make '
@@ -194,7 +237,7 @@ class _ParamScheduler:
 
             # Just check if there were two first scheduler.step() calls
             # before optimizer.step()
-            elif self.optimizer._global_step < 0:
+            elif step_optimizer._global_step == self._last_optimizer_step:
                 warnings.warn(
                     'Detected call of `scheduler.step()` before '
                     '`optimizer.step()`. In PyTorch 1.1.0 and later, you '
@@ -203,7 +246,9 @@ class _ParamScheduler:
                     'Failure to do this will result in PyTorch skipping '
                     'the first value of the parameter value schedule. '
                     'See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate',  # noqa: E501
-                    UserWarning)
+                    UserWarning,
+                )
+        self._last_optimizer_step = step_optimizer._global_step
         self._global_step += 1
 
         # Compute parameter value per param group in the effective range
@@ -269,6 +314,7 @@ class StepParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               step_size,
                               begin=0,
@@ -278,17 +324,14 @@ class StepParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
-        step_size = step_size * epoch_length
-        begin = int(begin * epoch_length)
+        step_size = to_updates(step_size)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
+            end = int(to_updates(end))
         return cls(
+            optimizer,
             *args,
             step_size=step_size,
             begin=begin,
@@ -357,6 +400,7 @@ class MultiStepParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               milestones,
                               begin=0,
@@ -366,17 +410,14 @@ class MultiStepParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
-        milestones = [i * epoch_length for i in milestones]
-        begin = int(begin * epoch_length)
+        milestones = [to_updates(i) for i in milestones]
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
+            end = int(to_updates(end))
         return cls(
+            optimizer,
             *args,
             milestones=milestones,
             begin=begin,
@@ -449,6 +490,7 @@ class ConstantParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               begin=0,
                               end=INF,
@@ -457,16 +499,18 @@ class ConstantParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
-        begin = int(begin * epoch_length)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
-        return cls(*args, begin=begin, end=end, by_epoch=by_epoch, **kwargs)
+            end = int(to_updates(end))
+        return cls(
+            optimizer,
+            *args,
+            begin=begin,
+            end=end,
+            by_epoch=by_epoch,
+            **kwargs)
 
     def _get_value(self):
         """Compute value using chainable form of the scheduler."""
@@ -532,6 +576,7 @@ class ExponentialParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               begin=0,
                               end=INF,
@@ -540,16 +585,18 @@ class ExponentialParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
-        begin = int(begin * epoch_length)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
-        return cls(*args, begin=begin, end=end, by_epoch=by_epoch, **kwargs)
+            end = int(to_updates(end))
+        return cls(
+            optimizer,
+            *args,
+            begin=begin,
+            end=end,
+            by_epoch=by_epoch,
+            **kwargs)
 
     def _get_value(self):
         """Compute value using chainable form of the scheduler."""
@@ -649,6 +696,7 @@ class CosineAnnealingParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               T_max=None,
                               begin=0,
@@ -658,18 +706,15 @@ class CosineAnnealingParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
         if T_max is not None:
-            T_max = T_max * epoch_length
-        begin = int(begin * epoch_length)
+            T_max = to_updates(T_max)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
+            end = int(to_updates(end))
         return cls(
+            optimizer,
             *args,
             T_max=T_max,
             begin=begin,
@@ -767,6 +812,7 @@ class LinearParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               begin=0,
                               end=INF,
@@ -775,16 +821,18 @@ class LinearParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
-        begin = int(begin * epoch_length)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
-        return cls(*args, begin=begin, end=end, by_epoch=by_epoch, **kwargs)
+            end = int(to_updates(end))
+        return cls(
+            optimizer,
+            *args,
+            begin=begin,
+            end=end,
+            by_epoch=by_epoch,
+            **kwargs)
 
     def _get_value(self):
         """Compute value using chainable form of the scheduler."""
@@ -857,6 +905,7 @@ class PolyParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               begin=0,
                               end=INF,
@@ -865,16 +914,18 @@ class PolyParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
-        begin = int(begin * epoch_length)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
-        return cls(*args, begin=begin, end=end, by_epoch=by_epoch, **kwargs)
+            end = int(to_updates(end))
+        return cls(
+            optimizer,
+            *args,
+            begin=begin,
+            end=end,
+            by_epoch=by_epoch,
+            **kwargs)
 
     def _get_value(self):
         """Compute value using chainable form of the scheduler."""
@@ -1078,6 +1129,7 @@ class OneCycleParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               begin=0,
                               end=INF,
@@ -1087,18 +1139,15 @@ class OneCycleParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
         by_epoch = False
-        begin = int(begin * epoch_length)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
+            end = int(to_updates(end))
         if total_steps is not None:
-            total_steps = total_steps * epoch_length
+            total_steps = to_updates(total_steps)
         return cls(
+            optimizer,
             *args,
             begin=begin,
             end=end,
@@ -1201,6 +1250,7 @@ class CosineRestartParamScheduler(_ParamScheduler):
 
     @classmethod
     def build_iter_from_epoch(cls,
+                              optimizer,
                               *args,
                               periods,
                               begin=0,
@@ -1210,17 +1260,14 @@ class CosineRestartParamScheduler(_ParamScheduler):
                               **kwargs):
         """Build an iter-based instance of this scheduler from an epoch-based
         config."""
-        assert by_epoch, 'Only epoch-based kwargs whose `by_epoch=True` can ' \
-                         'be converted to iter-based.'
-        assert epoch_length is not None and epoch_length > 0, \
-            f'`epoch_length` must be a positive integer, ' \
-            f'but got {epoch_length}.'
-        periods = [p * epoch_length for p in periods]
+        to_updates = _epoch_to_updates(optimizer, epoch_length, by_epoch)
+        periods = [to_updates(p) for p in periods]
         by_epoch = False
-        begin = int(begin * epoch_length)
+        begin = int(to_updates(begin))
         if end != INF:
-            end = int(end * epoch_length)
+            end = int(to_updates(end))
         return cls(
+            optimizer,
             *args,
             periods=periods,
             begin=begin,

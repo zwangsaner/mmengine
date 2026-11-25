@@ -11,9 +11,10 @@ from parameterized import parameterized
 
 from mmengine.evaluator import BaseMetric
 from mmengine.fileio import FileClient, LocalBackend
-from mmengine.hooks import CheckpointHook
+from mmengine.hooks import CheckpointHook, Hook
 from mmengine.logging import MessageHub
 from mmengine.registry import METRICS
+from mmengine.runner.checkpoint import _load_checkpoint
 from mmengine.testing import RunnerTestCase
 
 
@@ -361,6 +362,91 @@ class TestCheckpointHook(RunnerTestCase):
                 checkpoint_hook.after_val_epoch(runner, metrics)
                 isfile.assert_called_once()
                 remove_mock.assert_called_once()
+
+    def test_standalone_val_saves_each_best_checkpoint(self):
+        cfg = copy.deepcopy(self.epoch_based_cfg)
+        cfg.train_cfg = cfg.train_dataloader = cfg.optim_wrapper = None
+        cfg.val_evaluator.append(dict(type='TriangleMetric', length=4))
+        cfg.default_hooks.checkpoint = dict(
+            type='CheckpointHook',
+            by_epoch=False,
+            max_keep_ckpts=1,
+            save_best=['acc', 'test/acc'])
+        runner = self.build_runner(cfg)
+
+        metrics = runner.val()
+        for key in ('acc', 'test/acc'):
+            path = runner.message_hub.get_info(f'best_ckpt_{key}')
+            self.assertTrue(osp.isfile(path))
+            checkpoint = _load_checkpoint(path, map_location='cpu')
+            self.assertEqual(checkpoint['meta']['epoch'], 0)
+            self.assertEqual(checkpoint['meta']['iter'], 0)
+            self.assertEqual(
+                runner.message_hub.get_info(f'best_score_{key}'), metrics[key])
+
+    def test_tensor_best_score_from_checkpoint(self):
+        runner = self.build_runner(copy.deepcopy(self.epoch_based_cfg))
+        hook = CheckpointHook(save_best='acc', rule='greater')
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        runner.message_hub.update_info('best_score',
+                                       torch.tensor([0.5], device=device))
+        hook.before_val(runner)
+        hook.after_val_epoch(runner, dict(acc=torch.tensor([0.75])))
+        self.assertIsInstance(runner.message_hub.get_info('best_score'), float)
+        self.assertEqual(runner.message_hub.get_info('best_score'), 0.75)
+        self.assertTrue(osp.isfile(runner.message_hub.get_info('best_ckpt')))
+
+    def test_resume_partway_through_epoch(self):
+        cfg = copy.deepcopy(self.epoch_based_cfg)
+        cfg.train_cfg.update(max_epochs=1, val_begin=0)
+        cfg.train_dataloader.sampler.shuffle = False
+        cfg.optim_wrapper.accumulative_counts = 2
+        cfg.param_scheduler = dict(
+            type='StepLR', step_size=1, gamma=0.5, by_epoch=False)
+        cfg.default_hooks.checkpoint = dict(
+            type='CheckpointHook', interval=2, by_epoch=False)
+        events = []
+
+        class RecordProgress(Hook):
+
+            def before_val_epoch(self, runner):
+                events.append(('val', runner.iter))
+
+            def before_train_iter(self, runner, batch_idx, **kwargs):
+                events.append(('train', batch_idx))
+
+        original = self.build_runner(cfg)
+        original.register_hook(RecordProgress())
+        original.train()
+        self.assertEqual(events,
+                         [('val', 0)] + [('train', i)
+                                         for i in range(4)] + [('val', 4)])
+        work_dir = cfg.work_dir
+        for offset, legacy in ((2, False), (2, True), (4, False)):
+            with self.subTest(offset=offset, legacy=legacy):
+                path = osp.join(work_dir, f'iter_{offset}.pth')
+                checkpoint = _load_checkpoint(path, map_location='cpu')
+                self.assertEqual(checkpoint['meta']['iter_in_epoch'], offset)
+                if legacy:
+                    del checkpoint['meta']['iter_in_epoch']
+                    path = osp.join(work_dir, 'legacy.pth')
+                    torch.save(checkpoint, path)
+                cfg.work_dir = osp.join(work_dir, f'resume_{offset}_{legacy}')
+                cfg.load_from = path
+                cfg.resume = True
+                events.clear()
+                resumed = self.build_runner(cfg)
+                resumed.register_hook(RecordProgress())
+                resumed.train()
+                self.assertEqual(events,
+                                 [('train', i)
+                                  for i in range(offset, 4)] + [('val', 4)])
+                self.assertEqual(resumed.iter, original.iter)
+                self.assertEqual(resumed.param_schedulers[0].last_step,
+                                 original.param_schedulers[0].last_step)
+                for actual, expected in zip(resumed.model.parameters(),
+                                            original.model.parameters()):
+                    self.assertTrue(torch.equal(actual, expected))
 
     def test_after_train_epoch(self):
         cfg = copy.deepcopy(self.epoch_based_cfg)
